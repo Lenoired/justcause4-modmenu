@@ -1,0 +1,50 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Binary backups and extracted game assets
+*.dll.bak-*
+*.bak-*
+*.bak
+*.swf
+*.arc
+swf_extract/
+
+# Canonical build output and dependency rebuild intermediates
+/build/
+/dist/
+
+# Local pre-cleanup archive, tool state, and Python caches
+/archive/
+/.claude/
+__pycache__/
+*.pyc
