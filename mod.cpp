@@ -186,7 +186,7 @@ static const char* GetPlatformName() {
 }
 
 // Mod menu version shown in the header banner. Bump on releases.
-static const char* kModMenuVersion = "1.3";
+static const char* kModMenuVersion = "1.4";
 typedef void(*SendEvent_t)(const char*, void*);
 typedef void(__cdecl* report_gsfailure_t)(uintptr_t);
 static report_gsfailure_t o_report_gsfailure = nullptr;
