@@ -28,7 +28,7 @@ No external game files are required to compile `winmm.dll`.
 From the repository root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 What `build.ps1` does:
@@ -40,7 +40,7 @@ What `build.ps1` does:
 To force rebuilding `imgui/` and `minhook/` from source into `build\deps\libdeps.a` (without overwriting a pre-existing root `libdeps.a`):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RebuildDependencies
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RebuildDependencies
 ```
 
 ---
