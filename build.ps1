@@ -59,9 +59,11 @@ try {
     Write-Host "      Verified $($required.Count) inputs and $shaderKeys shader keys (+2 altitude variants)."
     New-Item -ItemType Directory -Force -Path $out,$build | Out-Null
 
-    $dependencies = Join-Path $here 'libdeps.a'
+    $rootDeps = Join-Path $here 'libdeps.a'
+    $builtDeps = Join-Path $build 'deps\libdeps.a'
+    $dependencies = if (Test-Path -LiteralPath $rootDeps -PathType Leaf) { $rootDeps } else { $builtDeps }
     $rebuiltDependencies = $false
-    if ($RebuildDependencies -or !(Test-Path -LiteralPath $dependencies)) {
+    if ($RebuildDependencies -or !(Test-Path -LiteralPath $dependencies -PathType Leaf)) {
         $reason = if ($RebuildDependencies) { '-RebuildDependencies requested' } else { 'libdeps.a not found' }
         Write-Step 3 $totalSteps "Building MinHook and Dear ImGui static archive ($reason)..."
         $rebuiltDependencies = $true
