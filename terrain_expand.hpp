@@ -602,7 +602,7 @@ struct alignas(8) SLockBufferParams {
     uint32_t _pad1c;
     uint64_t m_InternalLockContext;
 };
-static_assert(alignof(SLockBufferParams) == 8, "SLockBufferParams PDB alignment");
+static_assert(alignof(SLockBufferParams) == 8, "SLockBufferParams alignment");
 static_assert(offsetof(SLockBufferParams, m_Buffer) == 0x00, "SLockBufferParams buffer");
 static_assert(offsetof(SLockBufferParams, m_LockType) == 0x08, "SLockBufferParams lock type");
 static_assert(offsetof(SLockBufferParams, m_StateBefore) == 0x0c, "SLockBufferParams state before");
@@ -688,7 +688,7 @@ static constexpr uint32_t ExpandedPatchIndex(int32_t x, int32_t z, uint32_t lod)
            ((static_cast<uint32_t>(z) & 15U) << 4) | (static_cast<uint32_t>(x) & 15U);
 }
 
-// PDB layouts, also checked in both SetupRenderBlock bodies. This is the
+// Checked in both SetupRenderBlock bodies. This is the
 // *source terrain* header (argument 7), not the smaller vegetation patch header.
 struct VegSourcePatchHeader {
     uint8_t prefix[0x10];
@@ -734,7 +734,7 @@ struct ThreadSetupState {
 };
 static thread_local ThreadSetupState t_SetupState;
 
-// Exact PDB argument widths/counts. Win64 uses the unified register ABI.
+// Exact argument widths/counts. Win64 uses the unified register ABI.
 typedef void (__fastcall *SetPatchStatus_t)(uintptr_t block, int32_t patchX, int32_t patchZ, int32_t lod, uint32_t status);
 typedef void (__fastcall *Setup_t)(uintptr_t block, uintptr_t renderCtx);
 typedef void* (__fastcall *LockBuffer_t)(void* ctx, SLockBufferParams* params);
@@ -892,12 +892,12 @@ static void __fastcall hkSetBufferData(void* ctx, void* buffer, const void* sour
                static_cast<unsigned long long>(t_CreateState->block), buffer, index / 2, index & 1);
 }
 
-// PDB SIDAllocator layout. Terrain call sites hold their existing native mutex
+// SIDAllocator layout. Terrain call sites hold their existing native mutex
 // across these hooks; snapshots do not introduce unsynchronized allocator reads.
 struct SIDRangeView { uint32_t first, last; };
 struct SIDAllocatorView { SIDRangeView* ranges; uint32_t count, capacity; };
 static_assert(sizeof(SIDAllocatorView) == 16 && offsetof(SIDAllocatorView, count) == 8 &&
-              offsetof(SIDAllocatorView, capacity) == 12, "SIDAllocator PDB layout");
+              offsetof(SIDAllocatorView, capacity) == 12, "SIDAllocator layout");
 static constexpr uint32_t kPoolChunks[3] = {2048, 5120, 16384};
 static const char* const kPoolNames[3] = {"quads", "base-mesh", "palettes"};
 struct PoolDiagnostic { void* allocator = nullptr; uint32_t highWater = 0; uint64_t allocations = 0, frees = 0; };
@@ -1415,8 +1415,8 @@ inline bool ActivateTerrain16x16ExePatchesAndHooks() {
         TerrainLog("[Terrain16x16] CPU activation is too late: a terrain Type already exists; D3D creation denied (no writes)");
         return false;
     }
-    // Guarded implementation addresses catch both PDB thunks and direct calls.
-    // Type::Create/destructor/free are native PDB bodies. All signatures were
+    // Guarded implementation addresses catch both thunks and direct calls.
+    // Type::Create/destructor/free are native bodies. All signatures were
     // read from loaded /JustCause4.exe, not inferred from prior documentation.
     CpuHookRecord hooks[] = {
         {g_ExeBase + NativeRva(0x79a0940, 0x441bac0), reinterpret_cast<void*>(&hkSetPatchStatus), reinterpret_cast<void**>(&o_SetPatchStatus),

@@ -1,195 +1,188 @@
 #pragma once
 #include <cstdint>
 
-// Auto-generated Steam<->Epic address table for Just Cause 4 (mod.cpp port).
-// Selected at runtime in addresses.cpp via g_IsSteam.
-// NOTE: entries marked UNRESOLVED fall back to the Steam value; those
-//       features are Steam-only until an Epic value is confirmed.
 extern bool g_IsSteam;
 
-// Native layout selection does not depend on which launcher modules have loaded.
 enum class JC4NativeBuild { Unknown, Steam, Epic };
 JC4NativeBuild IdentifyJC4NativeBuild(uintptr_t exeBase);
 
-extern uintptr_t g_Addr_78840; // 0x78840 -> 0x78280  [thunk->]
-extern uintptr_t g_Addr_78F10; // 0x78F10 -> 0x78F10  [UNRESOLVED -> using Steam value]
-extern uintptr_t g_Addr_88850; // 0x88850 -> 0x881F0  [code 1.00]
-extern uintptr_t g_Addr_F3660; // 0xF3660 -> 0xF3520  [code 1.00]
-extern uintptr_t g_Addr_1B8810; // 0x1B8810 -> 0x1B8FE0  [thunk->0x43EBEC0]
-extern uintptr_t g_Addr_1D1640; // 0x1D1640 -> 0x1D2060  [code 1.00]
-extern uintptr_t g_Addr_1D1877; // 0x1D1877 -> 0x1D2297  [code 1.00]
-extern uintptr_t g_Addr_1D1888; // 0x1D1888 -> 0x1D22A8  [code 1.00]
-extern uintptr_t g_Addr_1D189E; // 0x1D189E -> 0x1D22BE  [code 1.00]
-extern uintptr_t g_Addr_1D18C5; // 0x1D18C5 -> 0x1D22E5  [code 1.00]
-extern uintptr_t g_Addr_244860; // 0x244860 -> 0x245360  [CAnimationControl::GetBoneMatrix]
-extern uintptr_t g_Addr_246470; // 0x246470 -> 0x4613591 [CAnimationControl::GetPreviousBoneMatrix]
-extern uintptr_t g_Addr_2530B0; // 0x2530B0 -> 0x253DE0  [CCameraTree::UpdateCameraContexts]
-extern uintptr_t g_Addr_253E20; // 0x253E20 -> 0x254B50  [CCameraTree::UpdateRenderContexts]
-extern uintptr_t g_Addr_283E70; // 0x283E70 -> 0x283E70  [UNRESOLVED -> using Steam value: CEffectInstance::IsAlive]
-extern uintptr_t g_Addr_28F0A0; // 0x28F0A0 -> 0x28F0A0  [UNRESOLVED -> using Steam value: CEffectInstance::Stop]
-extern uintptr_t g_Addr_286930; // 0x286930 -> 0x287680  [thunk->]
-extern uintptr_t g_Addr_2AC6E0; // 0x2AC6E0 -> 0x486C910 [CGameObject::GetInterpolatedWorldTransform]
-extern uintptr_t g_Addr_322720; // 0x322720 -> 0x324070  [console:WORLDTIME_SET_TIME]
-extern uintptr_t g_Addr_406CC9; // 0x406CC9 -> 0x4085C9  [code 1.00]
-extern uintptr_t g_Addr_422D60; // 0x422D60 -> 0x424A50  [code 1.00]
-extern uintptr_t g_Addr_422F0A; // 0x422F0A -> 0x424BFA  [code 1.00]
-extern uintptr_t g_Addr_422F12; // 0x422F12 -> 0x424C02  [code 1.00]
-extern uintptr_t g_Addr_423030; // 0x423030 -> 0x424D20  [code 1.00]
-extern uintptr_t g_Addr_4230D0; // 0x4230D0 -> 0x424DC0  [thunk->]
-extern uintptr_t g_Addr_4235BC; // 0x4235BC -> 0x4252AC  [code 1.00]
-extern uintptr_t g_Addr_4235C5; // 0x4235C5 -> 0x4252B5  [code 1.00]
-extern uintptr_t g_Addr_423655; // 0x423655 -> 0x425345  [code 1.00]
-extern uintptr_t g_Addr_424310; // 0x424310 -> 0x426050  [code 1.00]
-extern uintptr_t g_Addr_4246E0; // 0x4246E0 -> 0x426230  [UNVERIFIED-table]
-extern uintptr_t g_Addr_424910; // 0x424910 -> 0x426650  [thunk->]
-extern uintptr_t g_Addr_42AE40; // 0x42AE40 -> 0x42CC40  [code 1.00]
-extern uintptr_t g_Addr_46F2D5; // 0x46F2D5 -> 0x46DC35  [code 1.00]
-extern uintptr_t g_Addr_4715D0; // 0x4715D0 -> 0x473860  [thunk->]
-extern uintptr_t g_Addr_471790; // 0x471790 -> 0x473A20  [thunk->]
-extern uintptr_t g_Addr_480240; // 0x480240 -> 0x482680  [thunk->]
-extern uintptr_t g_Addr_48F5E0; // 0x48F5E0 -> 0x491AE0  [thunk->]
-extern uintptr_t g_Addr_4E6DA0; // 0x4E6DA0 -> 0x4E88A0  [code 1.00]
-extern uintptr_t g_Addr_53C0A0; // 0x53C0A0 -> 0x53C0A0  [UNRESOLVED -> using Steam value: CCharacter::ForceNeutralState]
-extern uintptr_t g_Addr_53D7B0; // 0x53D7B0 -> 0x53F470  [code 1.00]
-extern uintptr_t g_Addr_53DF40; // 0x53DF40 -> 0x53FC00  [CCharacter::GetBoneIndexForNameHash]
-extern uintptr_t g_Addr_542110; // 0x542110 -> 0x543DC0  [thunk->body 0x1478D680]
-extern uintptr_t g_Addr_5509E0; // 0x5509E0 -> 0x1482FC81 [CCharacter::GetWieldingWeapon]
-extern uintptr_t g_Addr_5570D0; // 0x5570D0 -> 0x14842F40 [CGameCameraManager::IsInCinematicCamera]
-extern uintptr_t g_Addr_5722C0; // 0x5722C0 -> 0x5741E0  [thunk->body 0x148CA800]
-extern uintptr_t g_Addr_573520; // 0x573520 -> 0x575440  [thunk->]
-extern uintptr_t g_Addr_574350; // 0x574350 -> 0x148D2DA1 [thunk->body: CCharacter::SetOpacity; Epic twin body-verified]
-extern uintptr_t g_Addr_578F60; // 0x578F60 -> 0x57AE60  [thunk->]
-extern uintptr_t g_Addr_594D00; // 0x594D00 -> 0x596C50  [CCharacter::UpdateRender]
-extern uintptr_t g_Addr_6A7630; // 0x6A7630 -> 0x6A9E70  [thunk->0x14CE69A0]
-extern uintptr_t g_Addr_6CFBB4; // 0x6CFBB4 -> 0x6D2584  [code 1.00, 5B before 6CFBB9]
-extern uintptr_t g_Addr_6CFBB9; // 0x6CFBB9 -> 0x6D2589  [code 1.00]
-extern uintptr_t g_Addr_6DE0C0; // 0x6DE0C0 -> UNRESOLVED Epic (CMissile::RemoveSelf thunk -> body 0x148B189E0, Steam Ghidra-verified)
-extern uintptr_t g_Addr_6F7F40; // 0x6F7F40 -> 0x6FBAA0  [thunk->0x14DDF580]
-extern uintptr_t g_Addr_702857; // 0x702857 -> 0x7063C8  [manual-block24]
-extern uintptr_t g_Addr_70288F; // 0x70288F -> 0x70640A  [code 1.00, live-verified Epic merge: mulss xmm2,xmm6; addss xmm1,xmm2]
-extern uintptr_t g_Addr_761BE0; // 0x761BE0 -> 0x765B20  [data block]
-extern uintptr_t g_Addr_761C30; // 0x761C30 -> 0x765B70  [code 1.00]
-extern uintptr_t g_Addr_761CE0; // 0x761CE0 -> 0x765C20  [code 1.00]
-extern uintptr_t g_Addr_7B3200; // 0x7B3200 -> 0x14FC3380 [CWeapon::SetVisible]
-extern uintptr_t g_Addr_7EAC10; // 0x7EAC10 -> 0x7EEE90  [thunk->]
-extern uintptr_t g_Addr_7F6290; // 0x7F6290 -> 0x7FA560  [thunk->]
-extern uintptr_t g_Addr_7FE8CC; // 0x7FE8CC -> 0x802FBC  [code 1.00]
-extern uintptr_t g_Addr_86D5B9; // 0x86D5B9 -> 0x86D5B9  [UNRESOLVED -> using Steam value]
-extern uintptr_t g_Addr_8F0E40; // 0x8F0E40 -> 0x8F5CF0  [code 1.00]
-extern uintptr_t g_Addr_91C920; // 0x91C920 -> 0x921B10  [code 1.00]
-extern uintptr_t g_Addr_955940; // 0x955940 -> 0x95AD40  [code 1.00]
-extern uintptr_t g_Addr_AFD360; // 0xAFD360 -> 0xAFD360  [UNRESOLVED -> using Steam value: CPlayerHealthEffects::ApplyEffectParameterData]
-extern uintptr_t g_Addr_ABDFF7; // 0xABDFF7 -> 0xAC5557  [code 1.00]
-extern uintptr_t g_Addr_ABE007; // 0xABE007 -> 0xAC5567  [code 1.00]
-extern uintptr_t g_Addr_B28D30; // 0xB28D30 -> 0xB31FB0  [thunk->body 0x15DEF5D0 CPlayer::SetOpacity]
-extern uintptr_t g_Addr_B7F570; // 0xB7F570 -> 0xB7F570  [UNRESOLVED Epic -> using Steam value: ConstructFactoryDebugStr]
-extern uintptr_t g_Addr_B80530; // 0xB80530 -> 0xB80530  [UNRESOLVED Epic -> using Steam value: CSpawnSystem::CreateFactory(short,uint,string*)]
-extern uintptr_t g_Addr_B89A10; // 0xB89A10 -> 0xB89A10  [UNRESOLVED Epic -> using Steam value: CSpawnSystem::GetRandomResource]
-extern uintptr_t g_Addr_B8A890; // 0xB8A890 -> 0xB8A890  [UNRESOLVED Epic -> using Steam value: CSpawnSystem::GetResources]
-extern uintptr_t g_Addr_BADC60; // 0xBADC60 -> 0xBB4A80  [console:SPAWN_SYSTEM_SPAWN]
-extern uintptr_t g_Addr_C3F540; // 0xC3F540 -> 0xC46700  [code 1.00]
-extern uintptr_t g_Addr_CB1790; // 0xCB1790 -> 0xCB8D30  [thunk: NGE::CCameraManager::InitTransform; Epic via unique caller-window context]
-extern uintptr_t g_Addr_CF27D0; // 0xCF27D0 -> 0xCF27D0  [UNRESOLVED -> using Steam value: CPostEffectsManager::SetParameter thunk]
-extern uintptr_t g_Addr_CD23C0; // 0xCD23C0 -> 0xCD23C0  [UNRESOLVED -> using Steam value: NGraphicsEngine::CFadeEffect::Apply]
-extern uintptr_t g_Addr_CD2D20; // 0xCD2D20 -> 0xCD2D20  [UNRESOLVED -> using Steam value: NGraphicsEngine::CPlayerDamageEffect::Apply (red damage screen)]
-extern uintptr_t g_Addr_D75D70; // 0xD75D70 -> 0xD7D9E0  [thunk->]
-extern uintptr_t g_Addr_E15C10; // 0xE15C10 -> 0xE1D790  [code 1.00]
-extern uintptr_t g_Addr_EB4D00; // 0xEB4D00 -> 0xEBC980  [code 1.00]
-extern uintptr_t g_Addr_FD13A0; // 0xFD13A0 -> 0xFD7700  [code 1.00]
-extern uintptr_t g_Addr_1AF9274; // 0x1AF9274 -> 0x1B017A4  [code 1.00]
-extern uintptr_t g_Addr_1CAE1C4; // 0x1CAE1C4 -> 0x1CB6484  [data block]
-extern uintptr_t g_Addr_1CAE1CC; // 0x1CAE1CC -> 0x1CB648C  [data block]
-extern uintptr_t g_Addr_1CB8220; // 0x1CB8220 -> 0x1CC0500  [data block]
-extern uintptr_t g_Addr_1CCB620; // 0x1CCB620 -> 0x1CD43C0  [data loc x4]
-extern uintptr_t g_Addr_1D083E0; // 0x1D083E0 -> 0x1D106C0  [data block]
-extern uintptr_t g_Addr_1D139E8; // 0x1D139E8 -> 0x1D1BC90  [data loc x4]
-extern uintptr_t g_Addr_1D25450; // 0x1D25450 -> 0x1D2D418  [data loc x6]
-extern uintptr_t g_Addr_1D7DF98; // 0x1D7DF98 -> 0x1D85EC8  [rtti]
-extern uintptr_t g_Addr_1D7E0E8; // 0x1D7E0E8 -> 0x1D86018  [rtti]
-extern uintptr_t g_Addr_1E01E14; // 0x1E01E14 -> 0x1E06C44  [data loc x1]
-extern uintptr_t g_Addr_1E7EEC0; // 0x1E7EEC0 -> 0x1E84B78  [data loc x4]
-extern uintptr_t g_Addr_2AD0F3C; // 0x2AD0F3C -> 0x2AD7F4C  [data block]
-extern uintptr_t g_Addr_2AD4492; // 0x2AD4492 -> 0x2ADB3EA  [data block]
-extern uintptr_t g_Addr_2AD4500; // 0x2AD4500 -> 0x2ADB458  [data block]
-extern uintptr_t g_Addr_2AD6850; // 0x2AD6850 -> 0x2ADD860  [CLandmark::s_LodFactorScale]
-extern uintptr_t g_Addr_2AE2760; // 0x2AE2760 -> 0x2AE9260  [data block]
-extern uintptr_t g_Addr_2AE55F0; // 0x2AE55F0 -> 0x2AEC04C  [Toggle_MotionBlur]
-extern uintptr_t g_Addr_2AE55F8; // 0x2AE55F8 -> 0x2AEC054  [data block]
-extern uintptr_t g_Addr_2AE55F9; // 0x2AE55F9 -> 0x2AEC055  [data block]
-extern uintptr_t g_Addr_2AE5610; // 0x2AE5610 -> 0x2AEC06C  [data block]
-extern uintptr_t g_Addr_2AE9720; // 0x2AE9720 -> 0x2AF0138  [data block]
-extern uintptr_t g_Addr_2AE9818; // 0x2AE9818 -> 0x2AE9818  [UNRESOLVED -> using Steam value]
-extern uintptr_t g_Addr_2AEAD0C; // 0x2AEAD0C -> 0x2AF1774  [data loc x1]
-extern uintptr_t g_Addr_2AEAD10; // 0x2AEAD10 -> 0x2AF1778  [data loc x1]
-extern uintptr_t g_Addr_2AF1E64; // 0x2AF1E64 -> 0x2AF88C4  [data block]
-extern uintptr_t g_Addr_2AF1E68; // 0x2AF1E68 -> 0x2AF88C8  [data block]
-extern uintptr_t g_Addr_2C73AE0; // 0x2C73AE0 -> 0x2C79ED0  [data loc x10]
-extern uintptr_t g_Addr_2C846B0; // 0x2C846B0 -> 0x2C8AAA8  [console:INST_CLOCK]
-extern uintptr_t g_Addr_2C84BE8; // 0x2C84BE8 -> 0x2C8AFD8  [Epic resolved via whole-file anchor scan, see addresses.cpp]
-extern uintptr_t g_Addr_2CAD92D; // 0x2CAD92D -> 0x2CAD92D  [UNRESOLVED -> using Steam value]
-extern uintptr_t g_Addr_2CADA68; // 0x2CADA68 -> 0x2CB3E48  [data loc x10]
-extern uintptr_t g_Addr_2CAFD90; // 0x2CAFD90 -> 0x2CB6150  [Epic resolved via ApplyEffect-body anchor scan, see addresses.cpp]
-extern uintptr_t g_Addr_2CAF970; // 0x2CAF970 -> 0x2CB5D30  [data loc x10]
-extern uintptr_t g_Addr_2CAFA50; // 0x2CAFA50 -> 0x2CB5E10  [data loc x10]
-extern uintptr_t g_Addr_2CAFDB0; // 0x2CAFDB0 -> 0x2CB6170  [console:INST_WORLDTIME]
-extern uintptr_t g_Addr_2CB0A48; // 0x2CB0A48 -> 0x2CB6E08  [console:INST_GAME_WORLD]
-extern uintptr_t g_Addr_2CB1938; // 0x2CB1938 -> 0x2CB7D08  [data loc x10]
-extern uintptr_t g_Addr_2CB1D20; // 0x2CB1D20 -> 0x2CB80F0  [console:INST_SPAWN_SYSTEM]
-extern uintptr_t g_Addr_2CB1D38; // 0x2CB1D38 -> 0x2CB8108  [data loc x4]
-extern uintptr_t g_Addr_2CB1D90; // 0x2CB1D90 -> 0x2CB8160  [data loc x8]
-extern uintptr_t g_Addr_2CB1D98; // 0x2CB1D98 -> 0x2CB8168  [data loc x8]
-extern uintptr_t g_Addr_2CB2388; // 0x2CB2388 -> 0x2CB8758  [console:INST_PLAYER_MANAGER]
-extern uintptr_t g_Addr_2CB4B28; // 0x2CB4B28 -> 0x2CBAEF8  [live-verified Epic balloon vector begin]
-extern uintptr_t g_Addr_2CB4B30; // 0x2CB4B30 -> 0x2CBAF00  [live-verified Epic balloon vector end, pairs with 2CBAEF8]
-extern uintptr_t g_Addr_2CB80F8; // 0x2CB80F8 -> UNRESOLVED Epic (CSingle<CAmmunitionManager>::Instance ptr, Steam Ghidra-verified: 56 xrefs incl Fire_Projectile)
-extern uintptr_t g_Addr_2CB5C70; // 0x2CB5C70 -> 0x2CBC040  [data loc x8]
-extern uintptr_t g_Addr_2CB5ED0; // 0x2CB5ED0 -> 0x2CBC2A0  [data loc x10]
-extern uintptr_t g_Addr_2CB9CB0; // 0x2CB9CB0 -> 0x2CC1270  [data loc x1]
-extern uintptr_t g_Addr_2CB9CB8; // 0x2CB9CB8 -> 0x2CB9CB8  [UNRESOLVED -> using Steam value]
-extern uintptr_t g_Addr_2CE3F30; // 0x2CE3F30 -> 0x2CEA370  [console:INST_HNPKWORLD]
-extern uintptr_t g_Addr_2CE3F38; // 0x2CE3F38 -> 0x2CEA378  [data, live 7000.0]
-extern uintptr_t g_Addr_6000000; // 0x6000000 -> 0x1B2A8000  [image-size bound]
-extern uintptr_t g_Addr_75C5E60; // 0x75C5E60 -> 0x3EF7EE1  [code 1.00]
-extern uintptr_t g_Addr_7600060; // 0x7600060 -> 0x3F48110  [code 1.00]
-extern uintptr_t g_Addr_76014E0; // 0x76014E0 -> 0x3F4A670  [CTransform::ToMatrix4]
-extern uintptr_t g_Addr_77B4BFB; // 0x77B4BFB -> 0x419BB8B  [data block]
-extern uintptr_t g_Addr_77BCA70; // 0x77BCA70 -> 0x41A4AD0  [code 1.00]
-extern uintptr_t g_Addr_77BCBDD; // 0x77BCBDD -> 0x41A4C3D  [code 1.00]
-extern uintptr_t g_Addr_77BDE85; // 0x77BDE85 -> 0x41A5ED0  [code 1.00]
-extern uintptr_t g_Addr_77BE2FE; // 0x77BE2FE -> 0x41A6351  [code 1.00]
-extern uintptr_t g_Addr_77BE4A6; // 0x77BE4A6 -> 0x41A64FC  [code 1.00]
-extern uintptr_t g_Addr_77BE5A5; // 0x77BE5A5 -> 0x41A6602  [code 1.00]
-extern uintptr_t g_Addr_77BE81D; // 0x77BE81D -> 0x41A686B  [manual-visual]
-extern uintptr_t g_Addr_79AFC53; // 0x79AFC53 -> 0x442F663  [code 1.00]
-extern uintptr_t g_Addr_7B0B340; // 0x7B0B340 -> 0x45EAE00  [code 1.00]
-extern uintptr_t g_Addr_7B0C3D0; // 0x7B0C3D0 -> 0x45EBA90  [code 1.00]
-extern uintptr_t g_Addr_8354F40; // 0x8354F40 -> 0x8354F40  [UNRESOLVED -> using Steam value: CCharacter::DoSyncRagdollState real body]
-extern uintptr_t g_Addr_8FEEF70; // 0x8FEEF70 -> 0x152D4D40  [code 0.81]
-extern uintptr_t g_Addr_91CA540; // 0x91CA540 -> 0x15442460  [code 1.00]
-extern uintptr_t g_Addr_92004C0; // 0x92004C0 -> 0x154A6290  [code 1.00, 35B]
-extern uintptr_t g_Addr_98AA180; // 0x98AA180 -> 0x98AA180  [UNRESOLVED -> using Steam value: CPlayerHealthEffects::Update real body]
-extern uintptr_t g_Addr_98AAE20; // 0x98AAE20 -> 0x15E001D0  [code 1.00]
-extern uintptr_t g_Addr_98AAE3B; // 0x98AAE3B -> 0x15E001EB  [code 1.00]
-extern uintptr_t g_Addr_98AAED1; // 0x98AAED1 -> 0x15E00281  [code 1.00]
-extern uintptr_t g_Addr_98ABC9B; // 0x98ABC9B -> 0x15E0197B  [code 0.70]
-extern uintptr_t g_Addr_98ABCE5; // 0x98ABCE5 -> 0x15E019C5  [code 0.95, patch-site 6/6]
-extern uintptr_t g_Addr_98ABD17; // 0x98ABD17 -> 0x15E019F7  [code 1.00]
-extern uintptr_t g_Addr_9F8E980; // 0x9F8E980 -> 0x16228E00  [data block]
-extern uintptr_t g_Addr_9FEC432; // 0x9FEC432 -> 0x16257AE2  [code 1.00]
-extern uintptr_t g_Addr_9FED7B9; // 0x9FED7B9 -> 0x1625B3EA  [code 1.00]
-extern uintptr_t g_Addr_9FED943; // 0x9FED943 -> 0x1625B574  [code 0.85]
-extern uintptr_t g_Addr_A369860; // 0xA369860 -> 0x16766D10  [code 0.72]
-extern uintptr_t g_Addr_A59C196; // 0xA59C196 -> 0x16ACCCD6  [code 1.00]
-extern uintptr_t g_Addr_A6CA200; // 0xA6CA200 -> 0xA6CA200  [UNRESOLVED -> using Steam value: COverlayUI::SetDamageEffect real body]
-extern uintptr_t g_Addr_A6BCD30; // 0xA6BCD30 -> 0xA6BCD30  [UNRESOLVED -> using Steam value]
-extern uintptr_t g_Addr_10000000; // 0x10000000 -> 0x1B2A8000  [image-size bound]
-extern uintptr_t g_Addr_10C02000; // 0x10C02000 -> 0x1B2A8000  [image-size bound]
-extern uintptr_t g_Addr_10E8544; // 0x10E8544 -> 0x10EF594  [RecenterWorldIfNeeded Y-center block, byte-shape verified both builds]
-extern uintptr_t g_Addr_2C84450; // 0x2C84450 -> 0x2C8A840  [g_LowSpecVideoCard bool; Epic via hires-string ref + 2x setcc-writer signature]
+extern uintptr_t g_Addr_78840;
+extern uintptr_t g_Addr_78F10;
+extern uintptr_t g_Addr_88850;
+extern uintptr_t g_Addr_F3660;
+extern uintptr_t g_Addr_1B8810;
+extern uintptr_t g_Addr_1D1640;
+extern uintptr_t g_Addr_1D1877;
+extern uintptr_t g_Addr_1D1888;
+extern uintptr_t g_Addr_1D189E;
+extern uintptr_t g_Addr_1D18C5;
+extern uintptr_t g_Addr_244860;
+extern uintptr_t g_Addr_246470;
+extern uintptr_t g_Addr_2530B0;
+extern uintptr_t g_Addr_253E20;
+extern uintptr_t g_Addr_283E70;
+extern uintptr_t g_Addr_28F0A0;
+extern uintptr_t g_Addr_286930;
+extern uintptr_t g_Addr_2AC6E0;
+extern uintptr_t g_Addr_322720;
+extern uintptr_t g_Addr_406CC9;
+extern uintptr_t g_Addr_422D60;
+extern uintptr_t g_Addr_422F0A;
+extern uintptr_t g_Addr_422F12;
+extern uintptr_t g_Addr_423030;
+extern uintptr_t g_Addr_4230D0;
+extern uintptr_t g_Addr_4235BC;
+extern uintptr_t g_Addr_4235C5;
+extern uintptr_t g_Addr_423655;
+extern uintptr_t g_Addr_424310;
+extern uintptr_t g_Addr_4246E0;
+extern uintptr_t g_Addr_424910;
+extern uintptr_t g_Addr_42AE40;
+extern uintptr_t g_Addr_46F2D5;
+extern uintptr_t g_Addr_4715D0;
+extern uintptr_t g_Addr_471790;
+extern uintptr_t g_Addr_480240;
+extern uintptr_t g_Addr_48F5E0;
+extern uintptr_t g_Addr_4E6DA0;
+extern uintptr_t g_Addr_53C0A0;
+extern uintptr_t g_Addr_53D7B0;
+extern uintptr_t g_Addr_53DF40;
+extern uintptr_t g_Addr_542110;
+extern uintptr_t g_Addr_5509E0;
+extern uintptr_t g_Addr_5570D0;
+extern uintptr_t g_Addr_5722C0;
+extern uintptr_t g_Addr_573520;
+extern uintptr_t g_Addr_574350;
+extern uintptr_t g_Addr_578F60;
+extern uintptr_t g_Addr_594D00;
+extern uintptr_t g_Addr_6A7630;
+extern uintptr_t g_Addr_6CFBB4;
+extern uintptr_t g_Addr_6CFBB9;
+extern uintptr_t g_Addr_6DE0C0;
+extern uintptr_t g_Addr_6F7F40;
+extern uintptr_t g_Addr_702857;
+extern uintptr_t g_Addr_70288F;
+extern uintptr_t g_Addr_761BE0;
+extern uintptr_t g_Addr_761C30;
+extern uintptr_t g_Addr_761CE0;
+extern uintptr_t g_Addr_7B3200;
+extern uintptr_t g_Addr_7EAC10;
+extern uintptr_t g_Addr_7F6290;
+extern uintptr_t g_Addr_7FE8CC;
+extern uintptr_t g_Addr_86D5B9;
+extern uintptr_t g_Addr_8F0E40;
+extern uintptr_t g_Addr_91C920;
+extern uintptr_t g_Addr_955940;
+extern uintptr_t g_Addr_AFD360;
+extern uintptr_t g_Addr_ABDFF7;
+extern uintptr_t g_Addr_ABE007;
+extern uintptr_t g_Addr_B28D30;
+extern uintptr_t g_Addr_B7F570;
+extern uintptr_t g_Addr_B80530;
+extern uintptr_t g_Addr_B89A10;
+extern uintptr_t g_Addr_B8A890;
+extern uintptr_t g_Addr_BADC60;
+extern uintptr_t g_Addr_C3F540;
+extern uintptr_t g_Addr_CB1790;
+extern uintptr_t g_Addr_CF27D0;
+extern uintptr_t g_Addr_CD23C0;
+extern uintptr_t g_Addr_CD2D20;
+extern uintptr_t g_Addr_D75D70;
+extern uintptr_t g_Addr_E15C10;
+extern uintptr_t g_Addr_EB4D00;
+extern uintptr_t g_Addr_FD13A0;
+extern uintptr_t g_Addr_1AF9274;
+extern uintptr_t g_Addr_1CAE1C4;
+extern uintptr_t g_Addr_1CAE1CC;
+extern uintptr_t g_Addr_1CB8220;
+extern uintptr_t g_Addr_1CCB620;
+extern uintptr_t g_Addr_1D083E0;
+extern uintptr_t g_Addr_1D139E8;
+extern uintptr_t g_Addr_1D25450;
+extern uintptr_t g_Addr_1D7DF98;
+extern uintptr_t g_Addr_1D7E0E8;
+extern uintptr_t g_Addr_1E01E14;
+extern uintptr_t g_Addr_1E7EEC0;
+extern uintptr_t g_Addr_2AD0F3C;
+extern uintptr_t g_Addr_2AD4492;
+extern uintptr_t g_Addr_2AD4500;
+extern uintptr_t g_Addr_2AD6850;
+extern uintptr_t g_Addr_2AE2760;
+extern uintptr_t g_Addr_2AE55F0;
+extern uintptr_t g_Addr_2AE55F8;
+extern uintptr_t g_Addr_2AE55F9;
+extern uintptr_t g_Addr_2AE5610;
+extern uintptr_t g_Addr_2AE9720;
+extern uintptr_t g_Addr_2AE9818;
+extern uintptr_t g_Addr_2AEAD0C;
+extern uintptr_t g_Addr_2AEAD10;
+extern uintptr_t g_Addr_2AF1E64;
+extern uintptr_t g_Addr_2AF1E68;
+extern uintptr_t g_Addr_2C73AE0;
+extern uintptr_t g_Addr_2C846B0;
+extern uintptr_t g_Addr_2C84BE8;
+extern uintptr_t g_Addr_2CAD92D;
+extern uintptr_t g_Addr_2CADA68;
+extern uintptr_t g_Addr_2CAFD90;
+extern uintptr_t g_Addr_2CAF970;
+extern uintptr_t g_Addr_2CAFA50;
+extern uintptr_t g_Addr_2CAFDB0;
+extern uintptr_t g_Addr_2CB0A48;
+extern uintptr_t g_Addr_2CB1938;
+extern uintptr_t g_Addr_2CB1D20;
+extern uintptr_t g_Addr_2CB1D38;
+extern uintptr_t g_Addr_2CB1D90;
+extern uintptr_t g_Addr_2CB1D98;
+extern uintptr_t g_Addr_2CB2388;
+extern uintptr_t g_Addr_2CB4B28;
+extern uintptr_t g_Addr_2CB4B30;
+extern uintptr_t g_Addr_2CB80F8;
+extern uintptr_t g_Addr_2CB5C70;
+extern uintptr_t g_Addr_2CB5ED0;
+extern uintptr_t g_Addr_2CB9CB0;
+extern uintptr_t g_Addr_2CB9CB8;
+extern uintptr_t g_Addr_2CE3F30;
+extern uintptr_t g_Addr_2CE3F38;
+extern uintptr_t g_Addr_6000000;
+extern uintptr_t g_Addr_75C5E60;
+extern uintptr_t g_Addr_7600060;
+extern uintptr_t g_Addr_76014E0;
+extern uintptr_t g_Addr_77B4BFB;
+extern uintptr_t g_Addr_77BCA70;
+extern uintptr_t g_Addr_77BCBDD;
+extern uintptr_t g_Addr_77BDE85;
+extern uintptr_t g_Addr_77BE2FE;
+extern uintptr_t g_Addr_77BE4A6;
+extern uintptr_t g_Addr_77BE5A5;
+extern uintptr_t g_Addr_77BE81D;
+extern uintptr_t g_Addr_79AFC53;
+extern uintptr_t g_Addr_7B0B340;
+extern uintptr_t g_Addr_7B0C3D0;
+extern uintptr_t g_Addr_8354F40;
+extern uintptr_t g_Addr_8FEEF70;
+extern uintptr_t g_Addr_91CA540;
+extern uintptr_t g_Addr_92004C0;
+extern uintptr_t g_Addr_98AA180;
+extern uintptr_t g_Addr_98AAE20;
+extern uintptr_t g_Addr_98AAE3B;
+extern uintptr_t g_Addr_98AAED1;
+extern uintptr_t g_Addr_98ABC9B;
+extern uintptr_t g_Addr_98ABCE5;
+extern uintptr_t g_Addr_98ABD17;
+extern uintptr_t g_Addr_9F8E980;
+extern uintptr_t g_Addr_9FEC432;
+extern uintptr_t g_Addr_9FED7B9;
+extern uintptr_t g_Addr_9FED943;
+extern uintptr_t g_Addr_A369860;
+extern uintptr_t g_Addr_A59C196;
+extern uintptr_t g_Addr_A6CA200;
+extern uintptr_t g_Addr_A6BCD30;
+extern uintptr_t g_Addr_10000000;
+extern uintptr_t g_Addr_10C02000;
+extern uintptr_t g_Addr_10E8544;
+extern uintptr_t g_Addr_2C84450;
 
 void InitializePlatformAddresses();
 
-// Map a Steam RVA to the current platform's RVA (for bare-RVA tables).
 uintptr_t JRVA(uintptr_t steam_rva);
-// true if a Steam RVA is known for the current platform (false only on Epic when unmapped)
 bool JRVA_KNOWN(uintptr_t steam_rva);

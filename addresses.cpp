@@ -200,184 +200,183 @@ void InitializePlatformAddresses() {
     const auto build = IdentifyJC4NativeBuild(reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)));
     g_IsSteam = build == JC4NativeBuild::Steam ||
                 (build == JC4NativeBuild::Unknown && GetModuleHandleA("steam_api64.dll") != nullptr);
-    g_Addr_78840 = g_IsSteam ? 0x78840u : 0x78280u; // thunk->
-    g_Addr_78F10 = g_IsSteam ? 0x78F10u : 0x78F10u; // UNRESOLVED -> using Steam value
-    g_Addr_88850 = g_IsSteam ? 0x88850u : 0x881F0u; // code 1.00
-    g_Addr_F3660 = g_IsSteam ? 0xF3660u : 0xF3520u; // code 1.00
-    g_Addr_1B8810 = g_IsSteam ? 0x1B8810u : 0x1B8FE0u; // thunk->0x43EBEC0 (fuzzy verified)
-    g_Addr_1D1640 = g_IsSteam ? 0x1D1640u : 0x1D2060u; // code 1.00
-    g_Addr_1D1877 = g_IsSteam ? 0x1D1877u : 0x1D2297u; // code 1.00
-    g_Addr_1D1888 = g_IsSteam ? 0x1D1888u : 0x1D22A8u; // code 1.00
-    g_Addr_1D189E = g_IsSteam ? 0x1D189Eu : 0x1D22BEu; // code 1.00
-    g_Addr_1D18C5 = g_IsSteam ? 0x1D18C5u : 0x1D22E5u; // code 1.00
-    g_Addr_244860 = g_IsSteam ? 0x244860u : 0x245360u; // CAnimationControl::GetBoneMatrix
-    g_Addr_246470 = g_IsSteam ? 0x246470u : 0x4613591u; // CAnimationControl::GetPreviousBoneMatrix
-    g_Addr_2530B0 = g_IsSteam ? 0x2530B0u : 0x253DE0u; // CCameraTree::UpdateCameraContexts
-    g_Addr_253E20 = g_IsSteam ? 0x253E20u : 0x254B50u; // CCameraTree::UpdateRenderContexts
-    g_Addr_283E70 = g_IsSteam ? 0x283E70u : 0x283E70u; // UNRESOLVED -> using Steam value (CEffectInstance::IsAlive)
-    g_Addr_28F0A0 = g_IsSteam ? 0x28F0A0u : 0x28F0A0u; // UNRESOLVED -> using Steam value (CEffectInstance::Stop)
-    g_Addr_286930 = g_IsSteam ? 0x286930u : 0x287680u; // thunk->
-    g_Addr_2AC6E0 = g_IsSteam ? 0x2AC6E0u : 0x486C910u; // CGameObject::GetInterpolatedWorldTransform
-    g_Addr_322720 = g_IsSteam ? 0x322720u : 0x324070u; // console:WORLDTIME_SET_TIME
-    g_Addr_406CC9 = g_IsSteam ? 0x406CC9u : 0x4085C9u; // code 1.00
-    g_Addr_422D60 = g_IsSteam ? 0x422D60u : 0x424A50u; // code 1.00
-    g_Addr_422F0A = g_IsSteam ? 0x422F0Au : 0x424BFAu; // code 1.00
-    g_Addr_422F12 = g_IsSteam ? 0x422F12u : 0x424C02u; // code 1.00
-    g_Addr_423030 = g_IsSteam ? 0x423030u : 0x424D20u; // code 1.00
-    g_Addr_4230D0 = g_IsSteam ? 0x4230D0u : 0x424DC0u; // thunk->
-    g_Addr_4235BC = g_IsSteam ? 0x4235BCu : 0x4252ACu; // code 1.00
-    g_Addr_4235C5 = g_IsSteam ? 0x4235C5u : 0x4252B5u; // code 1.00
-    g_Addr_423655 = g_IsSteam ? 0x423655u : 0x425345u; // code 1.00
-    g_Addr_424310 = g_IsSteam ? 0x424310u : 0x426050u; // code 1.00
-    g_Addr_4246E0 = g_IsSteam ? 0x4246E0u : 0x426420u; // Heat_SetLevel thunk -> target 0x14431620 (masked-sig verified)
-    g_Addr_424910 = g_IsSteam ? 0x424910u : 0x426650u; // thunk->
-    g_Addr_42AE40 = g_IsSteam ? 0x42AE40u : 0x42CC40u; // code 1.00
-    g_Addr_46F2D5 = g_IsSteam ? 0x46F2D5u : 0x46DC35u; // code 1.00
-    g_Addr_4715D0 = g_IsSteam ? 0x4715D0u : 0x473860u; // thunk->
-    g_Addr_471790 = g_IsSteam ? 0x471790u : 0x473A20u; // thunk->
-    g_Addr_480240 = g_IsSteam ? 0x480240u : 0x482680u; // thunk->
-    g_Addr_48F5E0 = g_IsSteam ? 0x48F5E0u : 0x491AE0u; // thunk->
-    g_Addr_4E6DA0 = g_IsSteam ? 0x4E6DA0u : 0x4E88A0u; // code 1.00
-    g_Addr_53C0A0 = g_IsSteam ? 0x53C0A0u : 0x53C0A0u; // UNRESOLVED -> using Steam value (CCharacter::ForceNeutralState)
-    g_Addr_53D7B0 = g_IsSteam ? 0x53D7B0u : 0x53F470u; // code 1.00
-    g_Addr_53DF40 = g_IsSteam ? 0x53DF40u : 0x53FC00u; // CCharacter::GetBoneIndexForNameHash
-    g_Addr_542110 = g_IsSteam ? 0x542110u : 0x543DC0u; // GetGrappleHook thunk -> body 0x1478D680 (verified: lea rax,[rcx+0xA40];ret exact)
-    g_Addr_5509E0 = g_IsSteam ? 0x5509E0u : 0x1482FC81u; // CCharacter::GetWieldingWeapon
-    g_Addr_5570D0 = g_IsSteam ? 0x5570D0u : 0x14842F40u; // CGameCameraManager::IsInCinematicCamera
-    g_Addr_5722C0 = g_IsSteam ? 0x5722C0u : 0x5741E0u; // SetCharacterGravity thunk -> body 0x148CA800 (16/16 identical)
-    g_Addr_573520 = g_IsSteam ? 0x573520u : 0x575440u; // thunk->
-    g_Addr_574350 = g_IsSteam ? 0x574350u : 0x148D2DA1u; // CCharacter::SetOpacity thunk -> body 0x85D0300; Epic twin body byte-identical prologue (rcx+0x6A8 render node)
-    g_Addr_578F60 = g_IsSteam ? 0x578F60u : 0x57AE60u; // thunk->
-    g_Addr_594D00 = g_IsSteam ? 0x594D00u : 0x596C50u; // CCharacter::UpdateRender
-    g_Addr_6A7630 = g_IsSteam ? 0x6A7630u : 0x6A9E70u; // thunk->0x14CE69A0 (fuzzy verified)
-    g_Addr_6CFBB4 = g_IsSteam ? 0x6CFBB4u : 0x6D2584u; // tether-limit site (5B before 6CFBB9/0x6D2589, bytes identical)
-    g_Addr_6CFBB9 = g_IsSteam ? 0x6CFBB9u : 0x6D2589u; // code 1.00
-    g_Addr_6DE0C0 = g_IsSteam ? 0x6DE0C0u : 0x6DE0C0u; // UNRESOLVED Epic -> using Steam value (pool valve gated to Steam until live-verified)
-    g_Addr_6F7F40 = g_IsSteam ? 0x6F7F40u : 0x6FBAA0u; // thunk->0x14DDF580 (fuzzy verified)
-    g_Addr_702857 = g_IsSteam ? 0x702857u : 0x7063C8u; // manual-block24
-    g_Addr_70288F = g_IsSteam ? 0x70288Fu : 0x70640Au; // Epic merge site (mulss xmm2,xmm6; addss xmm1,xmm2), live-verified
-    g_Addr_761BE0 = g_IsSteam ? 0x761BE0u : 0x765B20u; // data block
-    g_Addr_761C30 = g_IsSteam ? 0x761C30u : 0x765B70u; // code 1.00
-    g_Addr_761CE0 = g_IsSteam ? 0x761CE0u : 0x765C20u; // code 1.00
-    g_Addr_7B3200 = g_IsSteam ? 0x7B3200u : 0x14FC3380u; // CWeapon::SetVisible
-    g_Addr_7EAC10 = g_IsSteam ? 0x7EAC10u : 0x7EEE90u; // thunk->
-    g_Addr_7F6290 = g_IsSteam ? 0x7F6290u : 0x7FA560u; // thunk->
-    g_Addr_7FE8CC = g_IsSteam ? 0x7FE8CCu : 0x802FBCu; // code 1.00
-    g_Addr_86D5B9 = g_IsSteam ? 0x86D5B9u : 0x86D5B9u; // UNRESOLVED -> using Steam value
-    g_Addr_8F0E40 = g_IsSteam ? 0x8F0E40u : 0x8F5CF0u; // code 1.00
-    g_Addr_91C920 = g_IsSteam ? 0x91C920u : 0x921B10u; // code 1.00
-    g_Addr_955940 = g_IsSteam ? 0x955940u : 0x95AD40u; // code 1.00
-    g_Addr_AFD360 = g_IsSteam ? 0xAFD360u : 0xAFD360u; // UNRESOLVED -> using Steam value (CPlayerHealthEffects::ApplyEffectParameterData)
-    g_Addr_ABDFF7 = g_IsSteam ? 0xABDFF7u : 0xAC5557u; // code 1.00
-    g_Addr_ABE007 = g_IsSteam ? 0xABE007u : 0xAC5567u; // code 1.00
-    g_Addr_B28D30 = g_IsSteam ? 0xB28D30u : 0xB31FB0u; // CPlayer::SetOpacity thunk -> body 0x15DEF5D0
-    g_Addr_B7F570 = g_IsSteam ? 0xB7F570u : 0xB7F570u; // UNRESOLVED Epic -> using Steam value
-    g_Addr_B80530 = g_IsSteam ? 0xB80530u : 0xB80530u; // UNRESOLVED Epic -> using Steam value
-    g_Addr_B89A10 = g_IsSteam ? 0xB89A10u : 0xB89A10u; // UNRESOLVED Epic -> using Steam value
-    g_Addr_B8A890 = g_IsSteam ? 0xB8A890u : 0xB8A890u; // UNRESOLVED Epic -> using Steam value
-    g_Addr_BADC60 = g_IsSteam ? 0xBADC60u : 0xBB4A80u; // console:SPAWN_SYSTEM_SPAWN
-    g_Addr_C3F540 = g_IsSteam ? 0xC3F540u : 0xC46700u; // code 1.00
-    g_Addr_CB1790 = g_IsSteam ? 0xCB1790u : 0xCB8D30u; // NGE::CCameraManager::InitTransform thunk; Epic via unique caller-window context match (UpdateRender)
-    g_Addr_CF27D0 = g_IsSteam ? 0xCF27D0u : 0xCF27D0u; // UNRESOLVED -> using Steam value (CPostEffectsManager::SetParameter thunk)
-    g_Addr_CD23C0 = g_IsSteam ? 0xCD23C0u : 0xCD23C0u; // UNRESOLVED -> using Steam value (CFadeEffect::Apply)
-    g_Addr_CD2D20 = g_IsSteam ? 0xCD2D20u : 0xCD2D20u; // UNRESOLVED -> using Steam value (CPlayerDamageEffect::Apply, red damage screen)
-    g_Addr_D75D70 = g_IsSteam ? 0xD75D70u : 0xD7D9E0u; // thunk->
-    g_Addr_E15C10 = g_IsSteam ? 0xE15C10u : 0xE1D790u; // code 1.00
-    g_Addr_EB4D00 = g_IsSteam ? 0xEB4D00u : 0xEBC980u; // code 1.00
-    g_Addr_FD13A0 = g_IsSteam ? 0xFD13A0u : 0xFD7700u; // code 1.00
-    g_Addr_1AF9274 = g_IsSteam ? 0x1AF9274u : 0x1B017A4u; // code 1.00
-    g_Addr_1CAE1C4 = g_IsSteam ? 0x1CAE1C4u : 0x1CB6484u; // data block
-    g_Addr_1CAE1CC = g_IsSteam ? 0x1CAE1CCu : 0x1CB648Cu; // data block
-    g_Addr_1CB8220 = g_IsSteam ? 0x1CB8220u : 0x1CC0500u; // data block
-    g_Addr_1CCB620 = g_IsSteam ? 0x1CCB620u : 0x1CD43C0u; // data loc x4
-    g_Addr_1D083E0 = g_IsSteam ? 0x1D083E0u : 0x1D106C0u; // data block
-    g_Addr_1D139E8 = g_IsSteam ? 0x1D139E8u : 0x1D1BC90u; // data loc x4
-    g_Addr_1D25450 = g_IsSteam ? 0x1D25450u : 0x1D2D418u; // data loc x6
-    g_Addr_1D7DF98 = g_IsSteam ? 0x1D7DF98u : 0x1D85EC8u; // rtti
-    g_Addr_1D7E0E8 = g_IsSteam ? 0x1D7E0E8u : 0x1D86018u; // rtti
-    g_Addr_1E01E14 = g_IsSteam ? 0x1E01E14u : 0x1E06C44u; // data loc x1
-    g_Addr_1E7EEC0 = g_IsSteam ? 0x1E7EEC0u : 0x1E84B78u; // data loc x4
-    g_Addr_2AD0F3C = g_IsSteam ? 0x2AD0F3Cu : 0x2AD7F4Cu; // data block
-    g_Addr_2AD4492 = g_IsSteam ? 0x2AD4492u : 0x2ADB3EAu; // data block
-    g_Addr_2AD4500 = g_IsSteam ? 0x2AD4500u : 0x2ADB458u; // data block
-    g_Addr_2AD6850 = g_IsSteam ? 0x2AD6850u : 0x2ADD860u; // CLandmark::s_LodFactorScale (block 16/16)
-    g_Addr_2AE2760 = g_IsSteam ? 0x2AE2760u : 0x2AE9260u; // data block
-    g_Addr_2AE55F0 = g_IsSteam ? 0x2AE55F0u : 0x2AEC04Cu; // Toggle_MotionBlur (delta 0x6A5C, 15/16)
-    g_Addr_2AE55F8 = g_IsSteam ? 0x2AE55F8u : 0x2AEC054u; // data block
-    g_Addr_2AE55F9 = g_IsSteam ? 0x2AE55F9u : 0x2AEC055u; // data block
-    g_Addr_2AE5610 = g_IsSteam ? 0x2AE5610u : 0x2AEC06Cu; // data block
-    g_Addr_2AE9720 = g_IsSteam ? 0x2AE9720u : 0x2AF0138u; // data block
-    g_Addr_2AE9818 = g_IsSteam ? 0x2AE9818u : 0x2AE9818u; // UNRESOLVED -> using Steam value
-    g_Addr_2AEAD0C = g_IsSteam ? 0x2AEAD0Cu : 0x2AF1774u; // data loc x1
-    g_Addr_2AEAD10 = g_IsSteam ? 0x2AEAD10u : 0x2AF1778u; // data loc x1
-    g_Addr_2AF1E64 = g_IsSteam ? 0x2AF1E64u : 0x2AF88C4u; // data block
-    g_Addr_2AF1E68 = g_IsSteam ? 0x2AF1E68u : 0x2AF88C8u; // data block
-    g_Addr_2C73AE0 = g_IsSteam ? 0x2C73AE0u : 0x2C79ED0u; // data loc x10
-    g_Addr_2C846B0 = g_IsSteam ? 0x2C846B0u : 0x2C8AAA8u; // console:INST_CLOCK
-    g_Addr_2C84BE8 = g_IsSteam ? 0x2C84BE8u : 0x2C8AFD8u; // CSingle<CRenderEngine>::Instance (Epic: whole-file anchor scan for MOVSS [reg+0x1198] + MOV RCX,[slot] + CALL m_PrecipitationDensity-store setter; unique hit, method validated by recovering exact Steam values; Epic delta +0x63F0 consistent with .data cluster)
-    g_Addr_2CAD92D = g_IsSteam ? 0x2CAD92Du : 0x2CAD92Du; // UNRESOLVED -> using Steam value
-    g_Addr_2CADA68 = g_IsSteam ? 0x2CADA68u : 0x2CB3E48u; // data loc x10
-    g_Addr_2CAFD90 = g_IsSteam ? 0x2CAFD90u : 0x2CB6150u; // CSingle<CSlowMotionManager>::Instance (Epic: ApplyEffect-body anchor [RCX+8]=1.0f store + RSP+0x28 load, twin entry via JMP thunk, 5 caller refs converge; Steam control recovered exact entry/thunk/slot)
-    g_Addr_2CAF970 = g_IsSteam ? 0x2CAF970u : 0x2CB5D30u; // data loc x10
-    g_Addr_2CAFA50 = g_IsSteam ? 0x2CAFA50u : 0x2CB5E10u; // data loc x10
-    g_Addr_2CAFDB0 = g_IsSteam ? 0x2CAFDB0u : 0x2CB6170u; // console:INST_WORLDTIME
-    g_Addr_2CB0A48 = g_IsSteam ? 0x2CB0A48u : 0x2CB6E08u; // console:INST_GAME_WORLD
-    g_Addr_2CB1938 = g_IsSteam ? 0x2CB1938u : 0x2CB7D08u; // data loc x10
-    g_Addr_2CB1D20 = g_IsSteam ? 0x2CB1D20u : 0x2CB80F0u; // console:INST_SPAWN_SYSTEM
-    g_Addr_2CB1D38 = g_IsSteam ? 0x2CB1D38u : 0x2CB8108u; // data loc x4
-    g_Addr_2CB1D90 = g_IsSteam ? 0x2CB1D90u : 0x2CB8160u; // data loc x8
-    g_Addr_2CB1D98 = g_IsSteam ? 0x2CB1D98u : 0x2CB8168u; // data loc x8
-    g_Addr_2CB2388 = g_IsSteam ? 0x2CB2388u : 0x2CB8758u; // console:INST_PLAYER_MANAGER
-    g_Addr_2CB4B28 = g_IsSteam ? 0x2CB4B28u : 0x2CBAEF8u; // live-verified Epic balloon vector begin
-    g_Addr_2CB4B30 = g_IsSteam ? 0x2CB4B30u : 0x2CBAF00u; // live-verified Epic balloon vector end (begin+8)
-    g_Addr_2CB80F8 = g_IsSteam ? 0x2CB80F8u : 0x2CB80F8u; // UNRESOLVED Epic -> using Steam value (pool valve gated to Steam until live-verified)
-    g_Addr_2CB5C70 = g_IsSteam ? 0x2CB5C70u : 0x2CBC040u; // data loc x8
-    g_Addr_2CB5ED0 = g_IsSteam ? 0x2CB5ED0u : 0x2CBC2A0u; // data loc x10
-    g_Addr_2CB9CB0 = g_IsSteam ? 0x2CB9CB0u : 0x2CC1270u; // data loc x1
-    g_Addr_2CB9CB8 = g_IsSteam ? 0x2CB9CB8u : 0x2CB9CB8u; // UNRESOLVED -> using Steam value
-    g_Addr_2CE3F30 = g_IsSteam ? 0x2CE3F30u : 0x2CEA370u; // console:INST_HNPKWORLD
-    g_Addr_2CE3F38 = g_IsSteam ? 0x2CE3F38u : 0x2CEA378u; // s_BroadphaseMaxAltitude (live 7000.0)
-    g_Addr_6000000 = g_IsSteam ? 0x6000000u : 0x1B2A8000u; // image-size bound (Epic)
-    g_Addr_75C5E60 = g_IsSteam ? 0x75C5E60u : 0x3EF7EE1u; // code 1.00
-    g_Addr_7600060 = g_IsSteam ? 0x7600060u : 0x3F48110u; // code 1.00
-    g_Addr_76014E0 = g_IsSteam ? 0x76014E0u : 0x3F4A670u; // CTransform::ToMatrix4 (fuzzy inst-exact)
-    g_Addr_77B4BFB = g_IsSteam ? 0x77B4BFBu : 0x419BB8Bu; // data block
-    g_Addr_77BCA70 = g_IsSteam ? 0x77BCA70u : 0x41A4AD0u; // code 1.00
-    g_Addr_77BCBDD = g_IsSteam ? 0x77BCBDDu : 0x41A4C3Du; // code 1.00
-    g_Addr_77BDE85 = g_IsSteam ? 0x77BDE85u : 0x41A5ED0u; // code 1.00
-    g_Addr_77BE2FE = g_IsSteam ? 0x77BE2FEu : 0x41A6351u; // code 1.00
-    g_Addr_77BE4A6 = g_IsSteam ? 0x77BE4A6u : 0x41A64FCu; // code 1.00
-    g_Addr_77BE5A5 = g_IsSteam ? 0x77BE5A5u : 0x41A6602u; // code 1.00
-    g_Addr_77BE81D = g_IsSteam ? 0x77BE81Du : 0x41A686Bu; // manual-visual
-    g_Addr_79AFC53 = g_IsSteam ? 0x79AFC53u : 0x442F663u; // code 1.00
-    g_Addr_7B0B340 = g_IsSteam ? 0x7B0B340u : 0x45EAE00u; // code 1.00
-    g_Addr_7B0C3D0 = g_IsSteam ? 0x7B0C3D0u : 0x45EBA90u; // code 1.00
-    g_Addr_8354F40 = g_IsSteam ? 0x8354F40u : 0x8354F40u; // UNRESOLVED -> using Steam value (CCharacter::DoSyncRagdollState real body)
-    g_Addr_8FEEF70 = g_IsSteam ? 0x8FEEF70u : 0x152D4D40u; // code 0.81
-    g_Addr_91CA540 = g_IsSteam ? 0x91CA540u : 0x15442460u; // code 1.00
-    g_Addr_92004C0 = g_IsSteam ? 0x92004C0u : 0x154A6290u; // CMissionManager::Update (35/35 identical up to tail-jmp)
-    g_Addr_98AA180 = g_IsSteam ? 0x98AA180u : 0x98AA180u; // UNRESOLVED -> using Steam value (CPlayerHealthEffects::Update real body)
-    g_Addr_98AAE20 = g_IsSteam ? 0x98AAE20u : 0x15E001D0u; // code 1.00
-    g_Addr_98AAE3B = g_IsSteam ? 0x98AAE3Bu : 0x15E001EBu; // code 1.00
-    g_Addr_98AAED1 = g_IsSteam ? 0x98AAED1u : 0x15E00281u; // code 1.00
-    g_Addr_98ABC9B = g_IsSteam ? 0x98ABC9Bu : 0x15E0197Bu; // code 0.70
-    g_Addr_98ABCE5 = g_IsSteam ? 0x98ABCE5u : 0x15E019C5u; // wingsuit missile drain (6/6 patch-site identical, 1 reg diff after)
-    g_Addr_98ABD17 = g_IsSteam ? 0x98ABD17u : 0x15E019F7u; // wingsuit missile latch (16/16 identical)
-    g_Addr_9F8E980 = g_IsSteam ? 0x9F8E980u : 0x16228E00u; // data block
-    g_Addr_9FEC432 = g_IsSteam ? 0x9FEC432u : 0x16257AE2u; // code 1.00
-    g_Addr_9FED7B9 = g_IsSteam ? 0x9FED7B9u : 0x1625B3EAu; // code 1.00
-    g_Addr_9FED943 = g_IsSteam ? 0x9FED943u : 0x1625B574u; // code 0.85
-    g_Addr_A369860 = g_IsSteam ? 0xA369860u : 0x16766D10u; // code 0.72
-    g_Addr_A59C196 = g_IsSteam ? 0xA59C196u : 0x16ACCCD6u; // code 1.00
-    g_Addr_A6CA200 = g_IsSteam ? 0xA6CA200u : 0xA6CA200u; // UNRESOLVED -> using Steam value (COverlayUI::SetDamageEffect real body)
-    g_Addr_A6BCD30 = g_IsSteam ? 0xA6BCD30u : 0xA6BCD30u; // UNRESOLVED -> using Steam value
-    g_Addr_10000000 = g_IsSteam ? 0x10000000u : 0x1B2A8000u; // image-size bound (Epic)
-    g_Addr_10C02000 = g_IsSteam ? 0x10C02000u : 0x1B2A8000u; // image-size bound (Epic)
-    g_Addr_10E8544 = g_IsSteam ? 0x10E8544u : 0x10EF594u; // RecenterWorldIfNeeded Y-center block (Epic verified via xref scan)
-    g_Addr_2C84450 = g_IsSteam ? 0x2C84450u : 0x2C8A840u; // g_LowSpecVideoCard bool (Epic: hires-string ref gate + matching 2x setcc writers)
+    g_Addr_78840 = g_IsSteam ? 0x78840u : 0x78280u;
+    g_Addr_78F10 = g_IsSteam ? 0x78F10u : 0x78F10u;
+    g_Addr_88850 = g_IsSteam ? 0x88850u : 0x881F0u;
+    g_Addr_F3660 = g_IsSteam ? 0xF3660u : 0xF3520u;
+    g_Addr_1B8810 = g_IsSteam ? 0x1B8810u : 0x1B8FE0u;
+    g_Addr_1D1640 = g_IsSteam ? 0x1D1640u : 0x1D2060u;
+    g_Addr_1D1877 = g_IsSteam ? 0x1D1877u : 0x1D2297u;
+    g_Addr_1D1888 = g_IsSteam ? 0x1D1888u : 0x1D22A8u;
+    g_Addr_1D189E = g_IsSteam ? 0x1D189Eu : 0x1D22BEu;
+    g_Addr_1D18C5 = g_IsSteam ? 0x1D18C5u : 0x1D22E5u;
+    g_Addr_244860 = g_IsSteam ? 0x244860u : 0x245360u;
+    g_Addr_246470 = g_IsSteam ? 0x246470u : 0x4613591u;
+    g_Addr_2530B0 = g_IsSteam ? 0x2530B0u : 0x253DE0u;
+    g_Addr_253E20 = g_IsSteam ? 0x253E20u : 0x254B50u;
+    g_Addr_283E70 = g_IsSteam ? 0x283E70u : 0x283E70u;
+    g_Addr_28F0A0 = g_IsSteam ? 0x28F0A0u : 0x28F0A0u;
+    g_Addr_286930 = g_IsSteam ? 0x286930u : 0x287680u;
+    g_Addr_2AC6E0 = g_IsSteam ? 0x2AC6E0u : 0x486C910u;
+    g_Addr_322720 = g_IsSteam ? 0x322720u : 0x324070u;
+    g_Addr_406CC9 = g_IsSteam ? 0x406CC9u : 0x4085C9u;
+    g_Addr_422D60 = g_IsSteam ? 0x422D60u : 0x424A50u;
+    g_Addr_422F0A = g_IsSteam ? 0x422F0Au : 0x424BFAu;
+    g_Addr_422F12 = g_IsSteam ? 0x422F12u : 0x424C02u;
+    g_Addr_423030 = g_IsSteam ? 0x423030u : 0x424D20u;
+    g_Addr_4230D0 = g_IsSteam ? 0x4230D0u : 0x424DC0u;
+    g_Addr_4235BC = g_IsSteam ? 0x4235BCu : 0x4252ACu;
+    g_Addr_4235C5 = g_IsSteam ? 0x4235C5u : 0x4252B5u;
+    g_Addr_423655 = g_IsSteam ? 0x423655u : 0x425345u;
+    g_Addr_424310 = g_IsSteam ? 0x424310u : 0x426050u;
+    g_Addr_4246E0 = g_IsSteam ? 0x4246E0u : 0x426420u;
+    g_Addr_424910 = g_IsSteam ? 0x424910u : 0x426650u;
+    g_Addr_42AE40 = g_IsSteam ? 0x42AE40u : 0x42CC40u;
+    g_Addr_46F2D5 = g_IsSteam ? 0x46F2D5u : 0x46DC35u;
+    g_Addr_4715D0 = g_IsSteam ? 0x4715D0u : 0x473860u;
+    g_Addr_471790 = g_IsSteam ? 0x471790u : 0x473A20u;
+    g_Addr_480240 = g_IsSteam ? 0x480240u : 0x482680u;
+    g_Addr_48F5E0 = g_IsSteam ? 0x48F5E0u : 0x491AE0u;
+    g_Addr_4E6DA0 = g_IsSteam ? 0x4E6DA0u : 0x4E88A0u;
+    g_Addr_53C0A0 = g_IsSteam ? 0x53C0A0u : 0x53C0A0u;
+    g_Addr_53D7B0 = g_IsSteam ? 0x53D7B0u : 0x53F470u;
+    g_Addr_53DF40 = g_IsSteam ? 0x53DF40u : 0x53FC00u;
+    g_Addr_542110 = g_IsSteam ? 0x542110u : 0x543DC0u;
+    g_Addr_5509E0 = g_IsSteam ? 0x5509E0u : 0x1482FC81u;
+    g_Addr_5570D0 = g_IsSteam ? 0x5570D0u : 0x14842F40u;
+    g_Addr_5722C0 = g_IsSteam ? 0x5722C0u : 0x5741E0u;
+    g_Addr_573520 = g_IsSteam ? 0x573520u : 0x575440u;
+    g_Addr_574350 = g_IsSteam ? 0x574350u : 0x148D2DA1u;
+    g_Addr_578F60 = g_IsSteam ? 0x578F60u : 0x57AE60u;
+    g_Addr_594D00 = g_IsSteam ? 0x594D00u : 0x596C50u;
+    g_Addr_6A7630 = g_IsSteam ? 0x6A7630u : 0x6A9E70u;
+    g_Addr_6CFBB4 = g_IsSteam ? 0x6CFBB4u : 0x6D2584u;
+    g_Addr_6CFBB9 = g_IsSteam ? 0x6CFBB9u : 0x6D2589u;
+    g_Addr_6DE0C0 = g_IsSteam ? 0x6DE0C0u : 0x6DE0C0u;
+    g_Addr_6F7F40 = g_IsSteam ? 0x6F7F40u : 0x6FBAA0u;
+    g_Addr_702857 = g_IsSteam ? 0x702857u : 0x7063C8u;
+    g_Addr_70288F = g_IsSteam ? 0x70288Fu : 0x70640Au;
+    g_Addr_761BE0 = g_IsSteam ? 0x761BE0u : 0x765B20u;
+    g_Addr_761C30 = g_IsSteam ? 0x761C30u : 0x765B70u;
+    g_Addr_761CE0 = g_IsSteam ? 0x761CE0u : 0x765C20u;
+    g_Addr_7B3200 = g_IsSteam ? 0x7B3200u : 0x14FC3380u;
+    g_Addr_7EAC10 = g_IsSteam ? 0x7EAC10u : 0x7EEE90u;
+    g_Addr_7F6290 = g_IsSteam ? 0x7F6290u : 0x7FA560u;
+    g_Addr_7FE8CC = g_IsSteam ? 0x7FE8CCu : 0x802FBCu;
+    g_Addr_86D5B9 = g_IsSteam ? 0x86D5B9u : 0x86D5B9u;
+    g_Addr_8F0E40 = g_IsSteam ? 0x8F0E40u : 0x8F5CF0u;
+    g_Addr_91C920 = g_IsSteam ? 0x91C920u : 0x921B10u;
+    g_Addr_955940 = g_IsSteam ? 0x955940u : 0x95AD40u;
+    g_Addr_AFD360 = g_IsSteam ? 0xAFD360u : 0xAFD360u;
+    g_Addr_ABDFF7 = g_IsSteam ? 0xABDFF7u : 0xAC5557u;
+    g_Addr_ABE007 = g_IsSteam ? 0xABE007u : 0xAC5567u;
+    g_Addr_B28D30 = g_IsSteam ? 0xB28D30u : 0xB31FB0u;
+    g_Addr_B7F570 = g_IsSteam ? 0xB7F570u : 0xB7F570u;
+    g_Addr_B80530 = g_IsSteam ? 0xB80530u : 0xB80530u;
+    g_Addr_B89A10 = g_IsSteam ? 0xB89A10u : 0xB89A10u;
+    g_Addr_B8A890 = g_IsSteam ? 0xB8A890u : 0xB8A890u;
+    g_Addr_BADC60 = g_IsSteam ? 0xBADC60u : 0xBB4A80u;
+    g_Addr_C3F540 = g_IsSteam ? 0xC3F540u : 0xC46700u;
+    g_Addr_CB1790 = g_IsSteam ? 0xCB1790u : 0xCB8D30u;
+    g_Addr_CF27D0 = g_IsSteam ? 0xCF27D0u : 0xCF27D0u;
+    g_Addr_CD23C0 = g_IsSteam ? 0xCD23C0u : 0xCD23C0u;
+    g_Addr_CD2D20 = g_IsSteam ? 0xCD2D20u : 0xCD2D20u;
+    g_Addr_D75D70 = g_IsSteam ? 0xD75D70u : 0xD7D9E0u;
+    g_Addr_E15C10 = g_IsSteam ? 0xE15C10u : 0xE1D790u;
+    g_Addr_EB4D00 = g_IsSteam ? 0xEB4D00u : 0xEBC980u;
+    g_Addr_FD13A0 = g_IsSteam ? 0xFD13A0u : 0xFD7700u;
+    g_Addr_1AF9274 = g_IsSteam ? 0x1AF9274u : 0x1B017A4u;
+    g_Addr_1CAE1C4 = g_IsSteam ? 0x1CAE1C4u : 0x1CB6484u;
+    g_Addr_1CAE1CC = g_IsSteam ? 0x1CAE1CCu : 0x1CB648Cu;
+    g_Addr_1CB8220 = g_IsSteam ? 0x1CB8220u : 0x1CC0500u;
+    g_Addr_1CCB620 = g_IsSteam ? 0x1CCB620u : 0x1CD43C0u;
+    g_Addr_1D083E0 = g_IsSteam ? 0x1D083E0u : 0x1D106C0u;
+    g_Addr_1D139E8 = g_IsSteam ? 0x1D139E8u : 0x1D1BC90u;
+    g_Addr_1D25450 = g_IsSteam ? 0x1D25450u : 0x1D2D418u;
+    g_Addr_1D7DF98 = g_IsSteam ? 0x1D7DF98u : 0x1D85EC8u;
+    g_Addr_1D7E0E8 = g_IsSteam ? 0x1D7E0E8u : 0x1D86018u;
+    g_Addr_1E01E14 = g_IsSteam ? 0x1E01E14u : 0x1E06C44u;
+    g_Addr_1E7EEC0 = g_IsSteam ? 0x1E7EEC0u : 0x1E84B78u;
+    g_Addr_2AD0F3C = g_IsSteam ? 0x2AD0F3Cu : 0x2AD7F4Cu;
+    g_Addr_2AD4492 = g_IsSteam ? 0x2AD4492u : 0x2ADB3EAu;
+    g_Addr_2AD4500 = g_IsSteam ? 0x2AD4500u : 0x2ADB458u;
+    g_Addr_2AD6850 = g_IsSteam ? 0x2AD6850u : 0x2ADD860u;
+    g_Addr_2AE2760 = g_IsSteam ? 0x2AE2760u : 0x2AE9260u;
+    g_Addr_2AE55F0 = g_IsSteam ? 0x2AE55F0u : 0x2AEC04Cu;
+    g_Addr_2AE55F8 = g_IsSteam ? 0x2AE55F8u : 0x2AEC054u;
+    g_Addr_2AE55F9 = g_IsSteam ? 0x2AE55F9u : 0x2AEC055u;
+    g_Addr_2AE5610 = g_IsSteam ? 0x2AE5610u : 0x2AEC06Cu;
+    g_Addr_2AE9720 = g_IsSteam ? 0x2AE9720u : 0x2AF0138u;
+    g_Addr_2AE9818 = g_IsSteam ? 0x2AE9818u : 0x2AE9818u;
+    g_Addr_2AEAD0C = g_IsSteam ? 0x2AEAD0Cu : 0x2AF1774u;
+    g_Addr_2AEAD10 = g_IsSteam ? 0x2AEAD10u : 0x2AF1778u;
+    g_Addr_2AF1E64 = g_IsSteam ? 0x2AF1E64u : 0x2AF88C4u;
+    g_Addr_2AF1E68 = g_IsSteam ? 0x2AF1E68u : 0x2AF88C8u;
+    g_Addr_2C73AE0 = g_IsSteam ? 0x2C73AE0u : 0x2C79ED0u;
+    g_Addr_2C846B0 = g_IsSteam ? 0x2C846B0u : 0x2C8AAA8u;
+    g_Addr_2C84BE8 = g_IsSteam ? 0x2C84BE8u : 0x2C8AFD8u;
+    g_Addr_2CAD92D = g_IsSteam ? 0x2CAD92Du : 0x2CAD92Du;
+    g_Addr_2CADA68 = g_IsSteam ? 0x2CADA68u : 0x2CB3E48u;
+    g_Addr_2CAFD90 = g_IsSteam ? 0x2CAFD90u : 0x2CB6150u;
+    g_Addr_2CAF970 = g_IsSteam ? 0x2CAF970u : 0x2CB5D30u;
+    g_Addr_2CAFA50 = g_IsSteam ? 0x2CAFA50u : 0x2CB5E10u;
+    g_Addr_2CAFDB0 = g_IsSteam ? 0x2CAFDB0u : 0x2CB6170u;
+    g_Addr_2CB0A48 = g_IsSteam ? 0x2CB0A48u : 0x2CB6E08u;
+    g_Addr_2CB1938 = g_IsSteam ? 0x2CB1938u : 0x2CB7D08u;
+    g_Addr_2CB1D20 = g_IsSteam ? 0x2CB1D20u : 0x2CB80F0u;
+    g_Addr_2CB1D38 = g_IsSteam ? 0x2CB1D38u : 0x2CB8108u;
+    g_Addr_2CB1D90 = g_IsSteam ? 0x2CB1D90u : 0x2CB8160u;
+    g_Addr_2CB1D98 = g_IsSteam ? 0x2CB1D98u : 0x2CB8168u;
+    g_Addr_2CB2388 = g_IsSteam ? 0x2CB2388u : 0x2CB8758u;
+    g_Addr_2CB4B28 = g_IsSteam ? 0x2CB4B28u : 0x2CBAEF8u;
+    g_Addr_2CB4B30 = g_IsSteam ? 0x2CB4B30u : 0x2CBAF00u;
+    g_Addr_2CB80F8 = g_IsSteam ? 0x2CB80F8u : 0x2CB80F8u;
+    g_Addr_2CB5C70 = g_IsSteam ? 0x2CB5C70u : 0x2CBC040u;
+    g_Addr_2CB5ED0 = g_IsSteam ? 0x2CB5ED0u : 0x2CBC2A0u;
+    g_Addr_2CB9CB0 = g_IsSteam ? 0x2CB9CB0u : 0x2CC1270u;
+    g_Addr_2CB9CB8 = g_IsSteam ? 0x2CB9CB8u : 0x2CB9CB8u;
+    g_Addr_2CE3F30 = g_IsSteam ? 0x2CE3F30u : 0x2CEA370u;
+    g_Addr_2CE3F38 = g_IsSteam ? 0x2CE3F38u : 0x2CEA378u;
+    g_Addr_6000000 = g_IsSteam ? 0x6000000u : 0x1B2A8000u;
+    g_Addr_75C5E60 = g_IsSteam ? 0x75C5E60u : 0x3EF7EE1u;
+    g_Addr_7600060 = g_IsSteam ? 0x7600060u : 0x3F48110u;
+    g_Addr_76014E0 = g_IsSteam ? 0x76014E0u : 0x3F4A670u;
+    g_Addr_77B4BFB = g_IsSteam ? 0x77B4BFBu : 0x419BB8Bu;
+    g_Addr_77BCA70 = g_IsSteam ? 0x77BCA70u : 0x41A4AD0u;
+    g_Addr_77BCBDD = g_IsSteam ? 0x77BCBDDu : 0x41A4C3Du;
+    g_Addr_77BDE85 = g_IsSteam ? 0x77BDE85u : 0x41A5ED0u;
+    g_Addr_77BE2FE = g_IsSteam ? 0x77BE2FEu : 0x41A6351u;
+    g_Addr_77BE4A6 = g_IsSteam ? 0x77BE4A6u : 0x41A64FCu;
+    g_Addr_77BE5A5 = g_IsSteam ? 0x77BE5A5u : 0x41A6602u;
+    g_Addr_77BE81D = g_IsSteam ? 0x77BE81Du : 0x41A686Bu;
+    g_Addr_79AFC53 = g_IsSteam ? 0x79AFC53u : 0x442F663u;
+    g_Addr_7B0B340 = g_IsSteam ? 0x7B0B340u : 0x45EAE00u;
+    g_Addr_7B0C3D0 = g_IsSteam ? 0x7B0C3D0u : 0x45EBA90u;
+    g_Addr_8354F40 = g_IsSteam ? 0x8354F40u : 0x8354F40u;
+    g_Addr_8FEEF70 = g_IsSteam ? 0x8FEEF70u : 0x152D4D40u;
+    g_Addr_91CA540 = g_IsSteam ? 0x91CA540u : 0x15442460u;
+    g_Addr_92004C0 = g_IsSteam ? 0x92004C0u : 0x154A6290u;
+    g_Addr_98AA180 = g_IsSteam ? 0x98AA180u : 0x98AA180u;
+    g_Addr_98AAE20 = g_IsSteam ? 0x98AAE20u : 0x15E001D0u;
+    g_Addr_98AAE3B = g_IsSteam ? 0x98AAE3Bu : 0x15E001EBu;
+    g_Addr_98AAED1 = g_IsSteam ? 0x98AAED1u : 0x15E00281u;
+    g_Addr_98ABC9B = g_IsSteam ? 0x98ABC9Bu : 0x15E0197Bu;
+    g_Addr_98ABCE5 = g_IsSteam ? 0x98ABCE5u : 0x15E019C5u;
+    g_Addr_98ABD17 = g_IsSteam ? 0x98ABD17u : 0x15E019F7u;
+    g_Addr_9F8E980 = g_IsSteam ? 0x9F8E980u : 0x16228E00u;
+    g_Addr_9FEC432 = g_IsSteam ? 0x9FEC432u : 0x16257AE2u;
+    g_Addr_9FED7B9 = g_IsSteam ? 0x9FED7B9u : 0x1625B3EAu;
+    g_Addr_9FED943 = g_IsSteam ? 0x9FED943u : 0x1625B574u;
+    g_Addr_A369860 = g_IsSteam ? 0xA369860u : 0x16766D10u;
+    g_Addr_A59C196 = g_IsSteam ? 0xA59C196u : 0x16ACCCD6u;
+    g_Addr_A6CA200 = g_IsSteam ? 0xA6CA200u : 0xA6CA200u;
+    g_Addr_A6BCD30 = g_IsSteam ? 0xA6BCD30u : 0xA6BCD30u;
+    g_Addr_10000000 = g_IsSteam ? 0x10000000u : 0x1B2A8000u;
+    g_Addr_10C02000 = g_IsSteam ? 0x10C02000u : 0x1B2A8000u;
+    g_Addr_10E8544 = g_IsSteam ? 0x10E8544u : 0x10EF594u;
+    g_Addr_2C84450 = g_IsSteam ? 0x2C84450u : 0x2C8A840u;
 }
 
-// ==== JRVA ====
 namespace { struct RvaPair { uintptr_t s; uintptr_t e; }; }
 static const RvaPair kRvaMap[] = {
     {0x78840u, 0x78280u},
@@ -516,8 +515,8 @@ static const RvaPair kRvaMap[] = {
     {0x1D7DF98u, 0x1D85EC8u},
     {0x1D7E0E8u, 0x1D86018u},
     {0x1E01E14u, 0x1E06C44u},
-    {0x1E63090u, 0x1E693F0u}, // shadow lo_q resolution table (Epic: content-anchored, bytes verified)
-    {0x1E630A0u, 0x1E69400u}, // shadow hi_q resolution table (Epic: content-anchored, bytes verified)
+    {0x1E63090u, 0x1E693F0u},
+    {0x1E630A0u, 0x1E69400u},
     {0x1E7EEC0u, 0x1E84B78u},
     {0x2AD0F3Cu, 0x2AD7F4Cu},
     {0x2AD0FD0u, 0x2AD7FA0u},
@@ -678,7 +677,7 @@ static const RvaPair kRvaMap[] = {
     {0x2C73AE0u, 0x2C79ED0u},
     {0x2C84450u, 0x2C8A840u},
     {0x2C846B0u, 0x2C8AAA8u},
-    {0x2CA5880u, 0x2CABC68u}, // Base::CSingle<CGraphicsEngine>::Instance (Epic: unique 43B code anchor in CShadowManager::SetEnabled, delta +0x63E8 ~ .data cluster +0x63F0)
+    {0x2CA5880u, 0x2CABC68u},
     {0x2CADA68u, 0x2CB3E48u},
     {0x2CAF970u, 0x2CB5D30u},
     {0x2CAFA50u, 0x2CB5E10u},
@@ -695,7 +694,7 @@ static const RvaPair kRvaMap[] = {
     {0x2CB5C70u, 0x2CBC040u},
     {0x2CB5ED0u, 0x2CBC2A0u},
     {0x2CB9CB0u, 0x2CC1270u},
-    {0x2CBD1B0u, 0x2CC37D8u}, // CSettingsManager::Instance (Epic: unique 46B double-read anchor in CGraphicsEngine::Update, both reads decode to same target)
+    {0x2CBD1B0u, 0x2CC37D8u},
     {0x2CE3F30u, 0x2CEA370u},
     {0x6000000u, 0x1B2A8000u},
     {0x75C5E60u, 0x3EF7EE1u},
@@ -744,7 +743,7 @@ uintptr_t JRVA(uintptr_t steam_rva) {
     while (lo < hi) { unsigned mid = (lo + hi) >> 1;
         if (kRvaMap[mid].s <= steam_rva) lo = mid + 1; else hi = mid; }
     if (lo > 0 && kRvaMap[lo-1].s == steam_rva) return kRvaMap[lo-1].e;
-    return steam_rva; // unknown -> fall back to steam rva
+    return steam_rva;
 }
 bool JRVA_KNOWN(uintptr_t steam_rva) {
     if (g_IsSteam) return true;

@@ -1948,7 +1948,7 @@ static bool IsLikelyGameObject(uintptr_t obj);
 static uintptr_t GetPlayerVehiclePtr();
 static std::string GetESPClassName(uintptr_t objPtr);
 // ----------------------------------------------------------------------------
-// Provenance (Ghidra /JustCause4.exe, Steam build, PDB types):
+// Vehicle struct offsets (Steam build, JustCause4.exe):
 //   CVehicle.m_PfxVehicle            @ 0x13DE8 -> CPfxCar* (shared_ptr + raw)
 //   CVehicle.m_LocalPlayerSeat       @ 0x1063C (int32; -1 = on foot, >=0 = Rico in car)
 //   CPfxCar.m_LandVehicleEngine      @ 0x2990 (10640) -> CPfxLandVehicleEngine*
@@ -2349,7 +2349,7 @@ uintptr_t GetWingsuitWeaponPtr(); // defined later: resolves Rico's wingsuit CWe
 // with full-auto holding fire, a never-empty mag would fire forever from a single click.
 static bool IsWingsuitFiringModule(uintptr_t module) {
     if (!module) return false;
-    uintptr_t owner = 0; // CFiringModule::m_Owner (CWeapon*) at +0x310 (PDB layout + disasm agree)
+    uintptr_t owner = 0; // CFiringModule::m_Owner (CWeapon*) at +0x310
     if (!FastRead<uintptr_t>(module + 0x310, owner) || !owner) return false;
     uintptr_t wingsuitWeapon = GetWingsuitWeaponPtr();
     return wingsuitWeapon && (owner == wingsuitWeapon);
@@ -4902,7 +4902,7 @@ enum {
     TSS_STATE, TSS_MOVEMENT, TSS_SPEED, TSS_HEIGHT, TSS_WIDTH, TSS_FLARE, TSS_PULL, TSS_SPIN, TSS_UPDRAFT,
     TSS_INTENSITY, TSS_DMG, TSS_DMGPLY, TSS_COUNT
 };
-static const struct { int base; uintptr_t off; bool is_int; const char* label; const char* pdb; const char* note; } TOR_SIMPLE[] = {
+static const struct { int base; uintptr_t off; bool is_int; const char* label; const char* field; const char* note; } TOR_SIMPLE[] = {
     {0, 0x228, true,  "Tornado State / Status",       "State",             "1 = Active Roaming, 4 = Dissipating, 5 = Inactive"},
     {0, 0x22C, true,  "Tornado Movement Mode",        "Movement",          "Movement mode (2 = Target Steering)"},
     {0, 0x270, false, "Movement speed",               "MovementSpeed",     "How fast the tornado roams the map."},
@@ -7336,8 +7336,7 @@ void ToggleMountainShadows(bool enable) {
 // ============================================================================
 // SHADOW RESOLUTION — NATIVE SETTINGS-MANAGER PIPELINE (engine-driven, 1:1)
 // ============================================================================
-// How the game natively changes the shadow atlas resolution (traced in Ghidra
-// with the Steam PDB symbols):
+// How the game natively changes the shadow atlas resolution:
 //
 //  1. The options menu calls CSettingsManager::SetValue (0x140BAB800) with
 //     EGraphicsShadowsQuality (m_Settings._Elems[4], +0x88) or
