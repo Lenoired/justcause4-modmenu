@@ -13283,7 +13283,7 @@ else if (g_CurrentTab == 10) {
                     terrain = JC4TerrainSettings::GetSnapshot();
                 }
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Lock all ground patches to LOD 9 (highest quality)\nMakes far away terrain look more detailed, at an expense of roughly 5-15% less FPS.");
+                    ImGui::SetTooltip("Lock all ground patches to LOD 9 (highest quality)\nMakes far away terrain look more detailed, at an expense of roughly 5-15%% less FPS.");
                 ImGui::TextDisabled("Altitude detail: %s now / %s saved", terrain.activeWidth == 16 && terrain.startupAltitudeDetail ? "On" : "Off", terrain.savedAltitudeDetail ? "On" : "Off");
                 if (terrain.altitudeOverride >= 0)
                     ImGui::TextWrapped("JC4_TERRAIN_ALTITUDE_DETAIL overrides the saved selection at launch.");
