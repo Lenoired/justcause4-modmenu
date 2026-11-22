@@ -23,7 +23,7 @@ No external game files are required to compile `winmm.dll`.
 
 ---
 
-### Option 1: Automated Build (`build.ps1`)
+### Automated Build (`build.ps1`)
 
 From the repository root:
 
