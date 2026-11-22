@@ -24,10 +24,7 @@
 #include "imgui/imgui_impl_dx11.h"
 #include "minhook/include/MinHook.h"
 #include "ultrafastload.hpp"
-// FULL COMPILE COMMAND OPTIMIZED g++ -shared -o winmm.dll mod.cpp addresses.cpp winmm_proxy.cpp winmm_proxy.s -Wl,winmm_proxy.def imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp imgui/backends/imgui_impl_win32.cpp imgui/backends/imgui_impl_dx11.cpp minhook/src/buffer.c minhook/src/hook.c minhook/src/trampoline.c minhook/src/hde/hde64.c -I. -Iimgui -Iimgui/backends -Iminhook/include -Wno-attributes -ld3d11 -ld3dcompiler -ldwmapi -luser32 -lgdi32 -static -O2 -flto=auto -s -ffunction-sections -fdata-sections -Wl,--gc-sections
 
-// PCH COMPILE FAST: g++ -shared -g -include pch.h -o winmm.dll mod.cpp addresses.cpp winmm_proxy.cpp winmm_proxy.s -Wl,winmm_proxy.def libdeps.a -I. -Iimgui -Iimgui/backends -Iminhook/include -Wno-attributes -ld3d11 -ld3dcompiler -ldwmapi -luser32 -lgdi32 -static -O0
-// PCH COMPILE OPTIMIZED: g++ -shared -s -o winmm.dll mod.cpp addresses.cpp winmm_proxy.cpp winmm_proxy.s -Wl,winmm_proxy.def libdeps.a -I. -Iimgui -Iimgui/backends -Iminhook/include -Wno-attributes -ld3d11 -ld3dcompiler -ldwmapi -luser32 -lgdi32 -static -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections
 
 extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static LONG WINAPI ModCrashHandler(EXCEPTION_POINTERS* ep) {
