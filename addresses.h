@@ -181,6 +181,28 @@ extern uintptr_t g_Addr_10000000;
 extern uintptr_t g_Addr_10C02000;
 extern uintptr_t g_Addr_10E8544;
 extern uintptr_t g_Addr_2C84450;
+extern uintptr_t g_Addr_2C84458;
+extern uintptr_t g_Addr_F8B8B0;
+extern uintptr_t g_Addr_F8BDC0;
+extern uintptr_t g_Addr_F27DB0;
+extern uintptr_t g_Addr_B8F4E0;
+extern uintptr_t g_Addr_2CCB738;
+extern uintptr_t g_Addr_E862E0;
+extern uintptr_t g_Addr_825A60;
+extern uintptr_t g_Addr_EAD660;
+extern uintptr_t g_Addr_EAE540;
+extern uintptr_t g_Addr_7B3A50;
+extern uintptr_t g_Addr_7B6D10;
+extern uintptr_t g_Addr_B478E0;
+extern uintptr_t g_Addr_A8D8D0;
+extern uintptr_t g_Addr_27C250;
+extern uintptr_t g_Addr_2CA54D8;
+extern uintptr_t g_Addr_17C690;
+extern uintptr_t g_Addr_286040;
+extern uintptr_t g_Addr_2862F0;
+extern uintptr_t g_Addr_550930;
+extern uintptr_t g_Addr_52CF20;
+extern uintptr_t g_Addr_571AC0;
 
 void InitializePlatformAddresses();
 

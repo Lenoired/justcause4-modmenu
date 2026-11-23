@@ -195,6 +195,28 @@ uintptr_t g_Addr_10000000;
 uintptr_t g_Addr_10C02000;
 uintptr_t g_Addr_10E8544;
 uintptr_t g_Addr_2C84450;
+uintptr_t g_Addr_2C84458;
+uintptr_t g_Addr_F8B8B0;
+uintptr_t g_Addr_F8BDC0;
+uintptr_t g_Addr_F27DB0;
+uintptr_t g_Addr_B8F4E0;
+uintptr_t g_Addr_2CCB738;
+uintptr_t g_Addr_E862E0;
+uintptr_t g_Addr_825A60;
+uintptr_t g_Addr_EAD660;
+uintptr_t g_Addr_EAE540;
+uintptr_t g_Addr_7B3A50;
+uintptr_t g_Addr_7B6D10;
+uintptr_t g_Addr_B478E0;
+uintptr_t g_Addr_A8D8D0;
+uintptr_t g_Addr_27C250;
+uintptr_t g_Addr_2CA54D8;
+uintptr_t g_Addr_17C690;
+uintptr_t g_Addr_286040;
+uintptr_t g_Addr_2862F0;
+uintptr_t g_Addr_550930;
+uintptr_t g_Addr_52CF20;
+uintptr_t g_Addr_571AC0;
 
 void InitializePlatformAddresses() {
     const auto build = IdentifyJC4NativeBuild(reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)));
@@ -202,7 +224,7 @@ void InitializePlatformAddresses() {
                 (build == JC4NativeBuild::Unknown && GetModuleHandleA("steam_api64.dll") != nullptr);
     g_Addr_78840 = g_IsSteam ? 0x78840u : 0x78280u;
     g_Addr_78F10 = g_IsSteam ? 0x78F10u : 0x78F10u;
-    g_Addr_88850 = g_IsSteam ? 0x88850u : 0x881F0u;
+    g_Addr_88850 = g_IsSteam ? 0x88850u : 0x882F0u;
     g_Addr_F3660 = g_IsSteam ? 0xF3660u : 0xF3520u;
     g_Addr_1B8810 = g_IsSteam ? 0x1B8810u : 0x1B8FE0u;
     g_Addr_1D1640 = g_IsSteam ? 0x1D1640u : 0x1D2060u;
@@ -263,7 +285,7 @@ void InitializePlatformAddresses() {
     g_Addr_7EAC10 = g_IsSteam ? 0x7EAC10u : 0x7EEE90u;
     g_Addr_7F6290 = g_IsSteam ? 0x7F6290u : 0x7FA560u;
     g_Addr_7FE8CC = g_IsSteam ? 0x7FE8CCu : 0x802FBCu;
-    g_Addr_86D5B9 = g_IsSteam ? 0x86D5B9u : 0x86D5B9u;
+    g_Addr_86D5B9 = g_IsSteam ? 0x86D5B9u : 0x871ED9u;
     g_Addr_8F0E40 = g_IsSteam ? 0x8F0E40u : 0x8F5CF0u;
     g_Addr_91C920 = g_IsSteam ? 0x91C920u : 0x921B10u;
     g_Addr_955940 = g_IsSteam ? 0x955940u : 0x95AD40u;
@@ -375,12 +397,34 @@ void InitializePlatformAddresses() {
     g_Addr_10C02000 = g_IsSteam ? 0x10C02000u : 0x1B2A8000u;
     g_Addr_10E8544 = g_IsSteam ? 0x10E8544u : 0x10EF594u;
     g_Addr_2C84450 = g_IsSteam ? 0x2C84450u : 0x2C8A840u;
+    g_Addr_2C84458 = g_IsSteam ? 0x2C84458u : 0x2C8A848u;
+    g_Addr_F8B8B0  = g_IsSteam ? 0xF8B8B0u  : 0x1708EA40u;
+    g_Addr_F8BDC0  = g_IsSteam ? 0xF8BDC0u  : 0x17090250u;
+    g_Addr_F27DB0  = g_IsSteam ? 0xF27DB0u  : 0x16F77A90u;
+    g_Addr_B8F4E0  = g_IsSteam ? 0xB8F4E0u  : 0xB95E90u;
+    g_Addr_2CCB738 = g_IsSteam ? 0x2CCB738u : 0x2CD1B98u;
+    g_Addr_E862E0  = g_IsSteam ? 0xE862E0u  : 0xE8DFC0u;
+    g_Addr_825A60  = g_IsSteam ? 0x825A60u  : 0x82A3C0u;
+    g_Addr_EAD660  = g_IsSteam ? 0xEAD660u  : 0xEB52F0u;
+    g_Addr_EAE540  = g_IsSteam ? 0xEAE540u  : 0xEB61C0u;
+    g_Addr_7B3A50  = g_IsSteam ? 0x7B3A50u  : 0x7B7AF0u;
+    g_Addr_7B6D10  = g_IsSteam ? 0x7B6D10u  : 0x7BADC0u;
+    g_Addr_B478E0  = g_IsSteam ? 0xB478E0u  : 0xB502A0u;
+    g_Addr_A8D8D0  = g_IsSteam ? 0xA8D8D0u  : 0xA93190u;
+    g_Addr_27C250  = g_IsSteam ? 0x27C250u  : 0x27D090u;
+    g_Addr_2CA54D8 = g_IsSteam ? 0x2CA54D8u : 0x2CAB8B8u;
+    g_Addr_17C690  = g_IsSteam ? 0x17C690u  : 0x17C810u;
+    g_Addr_286040  = g_IsSteam ? 0x286040u  : 0x286D90u;
+    g_Addr_2862F0  = g_IsSteam ? 0x2862F0u  : 0x287040u;
+    g_Addr_550930  = g_IsSteam ? 0x550930u  : 0x1482EF10u;
+    g_Addr_52CF20  = g_IsSteam ? 0x52CF20u  : 0x146F2230u;
+    g_Addr_571AC0  = g_IsSteam ? 0x571AC0u  : 0x5739E0u;
 }
 
 namespace { struct RvaPair { uintptr_t s; uintptr_t e; }; }
 static const RvaPair kRvaMap[] = {
     {0x78840u, 0x78280u},
-    {0x88850u, 0x881F0u},
+    {0x88850u, 0x882F0u},
     {0xF3660u, 0xF3520u},
     {0x11E2C0u, 0x11DC20u},
     {0x1264C0u, 0x1260D0u},

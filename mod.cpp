@@ -186,7 +186,7 @@ static const char* GetPlatformName() {
 }
 
 // Mod menu version shown in the header banner. Bump on releases.
-static const char* kModMenuVersion = "1.4";
+static const char* kModMenuVersion = "1.45";
 typedef void(*SendEvent_t)(const char*, void*);
 typedef void(__cdecl* report_gsfailure_t)(uintptr_t);
 static report_gsfailure_t o_report_gsfailure = nullptr;
@@ -266,6 +266,7 @@ bool g_AllVehiclesNitroJump = false;
 bool g_InfiniteNitro = false;
 bool g_InfiniteTurboJump = false;
 bool g_TurboJumpAirHop = false;
+static volatile bool g_LoadingScreenLifted = false;
 
 // ============================================================================
 // TIME & WORLD SYSTEM
@@ -9755,7 +9756,7 @@ void ToggleNoLogin(bool enable) {
 }
 
 void ToggleInfWeaponAmmo(bool enable) {
-    // Handled dynamically via the hk_SetMagazineAmmo hook using the g_InfWeaponAmmo flag.
+    // Handled dynamically via hk_SetMagazineAmmo* hooks and NukeWeapon::EnforceInfWeaponAmmo() using g_InfWeaponAmmo.
 }
 
 void UpdateOceanPatches() {
@@ -10933,6 +10934,1819 @@ typedef uint8_t (__fastcall* ResetToCheckpoint_t)(uintptr_t obj1, uintptr_t obj2
 typedef void (__fastcall* MissionManager_Update_t)(uintptr_t thisptr);
 
 static MissionManager_Update_t o_MissionManager_Update = nullptr;
+
+// ============================================================================
+// NUKE LAUNCHER CUSTOM WEAPON (VFS VIRTUAL MOUNT + GIANT SPHERE TANK EXPLOSION)
+// ============================================================================
+namespace NukeWeapon {
+    static constexpr uint32_t kNukeWeaponHash        = 0xbb8b5e21u; // JenkinsHash("wpn_nuke_launcher")
+    static constexpr uint32_t kNukeUiNameHash        = 0xc1f89c52u; // JenkinsHash("MOD_WPN_NUKE_LAUNCHER") computed at runtime too
+    static int16_t            g_NukeWeaponId         = 64;          // dynamic fallback if wid=64 is occupied in dropzone
+    static std::string        g_BaseWtunePath        = "editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.wtunec";
+    static constexpr uint32_t kSphereTankTuningHash  = 0x491a7075u; // fuel_dome_ForcePulse m_Tuning
+    static constexpr uint32_t kSphereTankVfxNewHash  = 0x999f77f0u; // VFX_dome_new
+    static constexpr uint32_t kSphereTankVfxPostHash = 0xb4c73c91u; // VFX_dome_postfx_new (explosion_fuel_xl_postfx.effc)
+    static constexpr uint32_t kSphereTankSfxGuid[4]  = { 0xb97a2972u, 0x4e1db867u, 0x51ac5396u, 0xa760a9c8u };
+
+    struct NukeConfig {
+        // Explosion effects & physics (scaled from vfxScale)
+        float vfxScale           = 1.0f;
+        bool  enableMainVfx      = true;
+        bool  enableDomePostFx   = true;
+        bool  enableSound        = true;
+        float forceRadius        = 50.0f;
+        float despawnRadius      = 15.0f;
+        float explosionPressure  = 800.0f;
+        float explosionSpeed     = 100.0f;
+        float damageScale        = 1.0f;
+        int   aiDamage           = 1000;
+        float aiDamageRadius     = 50.0f;
+        int   playerDamage       = 1000;
+        float playerDamageRadius = 50.0f;
+        bool  fireDamage         = true;
+        bool  forceKill          = false;
+        bool  syncDamageRadii    = true;
+
+        // Weapon & missile properties (live real-time)
+        float fireInterval       = 0.02f;   // SFiringModuleTuning::m_fire_rate (seconds between shots)
+        bool  fullAuto           = false;   // SFiringModuleTuning::m_fully_automatic
+        float missileSpeed1      = 100.0f;  // m_missile_acceleration[0]
+        float missileSpeed2      = 100.0f;  // m_missile_acceleration[1]
+        float missileStage1Time  = 5.0f;    // m_missile_acceleration_time[0]
+        int   magazineSize       = 3;       // SFiringModuleTuning::m_magazine_size
+        float reloadTimeScale    = 5.0f;    // SFiringModuleTuning::m_reload_time_scale
+        int   missilesPerShot    = 1;       // SFiringModuleMissileTuningBase::m_missile_per_shot
+        int   burstCount         = 0;       // SFiringModuleTuning::m_burst_count
+        float burstCooldown      = 0.0f;    // SFiringModuleTuning::m_burst_cooldown
+        float turningSpeed       = 90.0f;   // SFiringModuleMissileTuningBase::m_missile_turning_speed
+        float gravity            = 0.0f;    // SFiringModuleMissileTuningBase::m_gravity
+        bool  detonateOnImpact   = true;    // SFiringModuleMissileTuningBase::m_detonate_on_impact
+        float detonationTime     = 30.0f;   // SFiringModuleMissileTuningBase::m_missile_detonation_time
+        bool  unlimitedAmmo      = false;   // SFiringModuleTuning::m_unlimited_ammo
+    };
+
+    static NukeConfig g_Cfg;
+    static NukeConfig g_DefaultCfg;
+    static volatile bool g_SyncVfsPending = false;
+    static volatile bool g_RefillMagPending = false;
+    static std::vector<uint8_t> g_BaseWtuneBuf;
+    static std::vector<uint8_t> g_BaseFtuneBuf;
+
+    static void SyncExplosionFromVfxScale(NukeConfig& cfg) {
+        float sc = std::clamp(cfg.vfxScale, 0.2f, 10.0f);
+        cfg.vfxScale           = sc;
+        cfg.enableMainVfx      = true;
+        cfg.enableDomePostFx   = true;
+        cfg.enableSound        = true;
+        cfg.fireDamage         = true;
+        cfg.forceKill          = false;
+        cfg.syncDamageRadii    = true;
+        cfg.forceRadius        = 50.0f * sc;
+        cfg.despawnRadius      = 15.0f * sc;
+        cfg.explosionPressure  = 800.0f * sc;
+        cfg.explosionSpeed     = 100.0f * sc;
+        cfg.damageScale        = 1.0f * sc;
+        cfg.aiDamage           = (int)std::lround(1000.0f * sc);
+        cfg.aiDamageRadius     = cfg.forceRadius;
+        cfg.playerDamage       = (int)std::lround(1000.0f * sc);
+        cfg.playerDamageRadius = cfg.forceRadius;
+    }
+
+    static void ResetExplosionDefaults() {
+        g_Cfg.vfxScale = g_DefaultCfg.vfxScale;
+        SyncExplosionFromVfxScale(g_Cfg);
+        g_SyncVfsPending = true;
+    }
+
+    static void ResetWeaponDefaults() {
+        g_Cfg.fireInterval      = g_DefaultCfg.fireInterval;
+        g_Cfg.fullAuto          = g_DefaultCfg.fullAuto;
+        g_Cfg.missileSpeed1     = g_DefaultCfg.missileSpeed1;
+        g_Cfg.missileSpeed2     = g_DefaultCfg.missileSpeed2;
+        g_Cfg.missileStage1Time = g_DefaultCfg.missileStage1Time;
+        g_Cfg.magazineSize      = g_DefaultCfg.magazineSize;
+        g_Cfg.reloadTimeScale   = g_DefaultCfg.reloadTimeScale;
+        g_Cfg.missilesPerShot   = g_DefaultCfg.missilesPerShot;
+        g_Cfg.burstCount        = g_DefaultCfg.burstCount;
+        g_Cfg.burstCooldown     = g_DefaultCfg.burstCooldown;
+        g_Cfg.turningSpeed      = g_DefaultCfg.turningSpeed;
+        g_Cfg.gravity           = g_DefaultCfg.gravity;
+        g_Cfg.detonateOnImpact  = g_DefaultCfg.detonateOnImpact;
+        g_Cfg.detonationTime    = g_DefaultCfg.detonationTime;
+        g_Cfg.unlimitedAmmo     = g_DefaultCfg.unlimitedAmmo;
+        g_SyncVfsPending        = true;
+    }
+
+    static uint32_t JenkinsHash(const char* s, bool toLower) {
+        size_t len = strlen(s);
+        auto rot = [](uint32_t x, int k) -> uint32_t { return (x << k) | (x >> (32 - k)); };
+        auto ch  = [toLower](unsigned char c) -> uint32_t {
+            if (toLower && c >= 'A' && c <= 'Z') return (uint32_t)(c - 'A' + 'a');
+            return (uint32_t)c;
+        };
+        uint32_t a = 0xdeadbeefu + (uint32_t)len;
+        uint32_t b = a, c = a;
+        size_t pos = 0;
+        while (len - pos > 12) {
+            auto r32 = [&](size_t o) -> uint32_t {
+                return ch(s[o]) | (ch(s[o + 1]) << 8) | (ch(s[o + 2]) << 16) | (ch(s[o + 3]) << 24);
+            };
+            a += r32(pos); b += r32(pos + 4); c += r32(pos + 8);
+            a -= c; a ^= rot(c, 4);  c += b;
+            b -= a; b ^= rot(a, 6);  a += c;
+            c -= b; c ^= rot(b, 8);  b += a;
+            a -= c; a ^= rot(c, 16); c += b;
+            b -= a; b ^= rot(a, 19); a += c;
+            c -= b; c ^= rot(b, 4);  b += a;
+            pos += 12;
+        }
+        size_t rem = len - pos;
+        if (rem > 0) {
+            uint8_t tail[12] = { 0 };
+            for (size_t i = 0; i < rem; ++i) tail[i] = (uint8_t)ch(s[pos + i]);
+            auto t32 = [&](size_t o) -> uint32_t {
+                return (uint32_t)tail[o] | ((uint32_t)tail[o + 1] << 8) |
+                       ((uint32_t)tail[o + 2] << 16) | ((uint32_t)tail[o + 3] << 24);
+            };
+            a += t32(0); b += t32(4); c += t32(8);
+            c ^= b; c -= rot(b, 14);
+            a ^= c; a -= rot(c, 11);
+            b ^= a; b -= rot(a, 25);
+            c ^= b; c -= rot(b, 16);
+            a ^= c; a -= rot(c, 4);
+            b ^= a; b -= rot(a, 14);
+            c ^= b; c -= rot(b, 24);
+        }
+        return c;
+    }
+
+    static std::string NormalizeVfsPath(const char* in) {
+        if (!in) return "";
+        while (*in == '/' || *in == '\\') ++in;
+        std::string out;
+        out.reserve(strlen(in));
+        for (const char* p = in; *p; ++p) {
+            char c = *p;
+            if (c == '\\') c = '/';
+            else if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            out.push_back(c);
+        }
+        return out;
+    }
+
+    static void DiagLog(const char* fmt, ...) {
+        char buf[1024];
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        std::cout << buf << "\n" << std::flush;
+    }
+
+    struct VirtualFile {
+        std::string path;
+        std::vector<uint8_t> data;
+    };
+    static std::vector<VirtualFile> g_VirtFiles;
+
+    static const VirtualFile* FindVirtFile(const char* path) {
+        if (!path) return nullptr;
+        std::string norm = NormalizeVfsPath(path);
+        for (const auto& vf : g_VirtFiles) {
+            if (vf.path == norm) return &vf;
+        }
+        return nullptr;
+    }
+
+    static void AddVirtFile(const std::string& path, std::vector<uint8_t>&& data) {
+        std::string norm = NormalizeVfsPath(path.c_str());
+        for (auto& vf : g_VirtFiles) {
+            if (vf.path == norm) { vf.data = std::move(data); return; }
+        }
+        g_VirtFiles.push_back({ norm, std::move(data) });
+    }
+
+    struct SVfsFileInfo {
+        uint32_t m_ProviderName;
+        uint32_t m_Pad;
+        uint64_t m_Size;
+        int64_t  m_Offset;
+    };
+    static_assert(sizeof(SVfsFileInfo) == 24, "SVfsFileInfo layout mismatch");
+
+    struct SVfsMount {
+        void*    m_Provider;
+        void*    m_Instance;
+        uint32_t m_Priority;
+        char     m_Name[64];
+        uint32_t m_Pad;
+    };
+    static_assert(sizeof(SVfsMount) == 88, "SVfsMount layout mismatch");
+
+    struct IVfsProvider {
+        uint32_t m_Version;
+        uint32_t m_Type;
+        int32_t (__cdecl* Mount)(const char* param, void* vfs, void** outInst, const char** outErr);
+        int32_t (__cdecl* Unmount)(void* inst);
+        int32_t (__cdecl* ReadFile)(void* inst, const char* path, uint64_t off, void* dst, uint64_t sz, uint64_t* nread);
+        int32_t (__cdecl* ReadFileAsync)(void* inst, uint32_t reqId, void* sem, const char* path, uint64_t off, void* dst, uint64_t sz, uint64_t* nread);
+        int32_t (__cdecl* GetNativePath)(void* inst, const char* path, uint64_t sz);
+        int32_t (__cdecl* FileSize)(void* inst, const char* path, uint64_t* outSz);
+        int32_t (__cdecl* FileSizeAsync)(void* inst, uint32_t reqId, void* sem, const char* path, uint64_t* outSz);
+        int32_t (__cdecl* FileInfo)(void* inst, const char* path, SVfsFileInfo* outInfo);
+        int32_t (__cdecl* FileInfoAsync)(void* inst, uint32_t reqId, void* sem, const char* path, SVfsFileInfo* outInfo);
+        int32_t (__cdecl* SetEventCallback)(void* inst, void* cb, void* ctx);
+        int32_t (__cdecl* CancelAsyncRequest)(void* inst, uint32_t reqId);
+        int32_t (__cdecl* ListDir)(void* inst, const char* path, void* cb, void* ctx);
+    };
+    static_assert(sizeof(IVfsProvider) == 104, "IVfsProvider layout mismatch");
+
+    static int32_t __cdecl VirtMount(const char*, void*, void** outInst, const char**) {
+        if (outInst) *outInst = (void*)0x1;
+        return 0;
+    }
+    static int32_t __cdecl VirtUnmount(void*) { return 0; }
+    static int32_t __cdecl VirtReadFile(void*, const char* path, uint64_t off, void* dst, uint64_t sz, uint64_t* nread) {
+        const VirtualFile* vf = FindVirtFile(path);
+        if (!vf) return 3; // E_VFS_ERROR_FILE_NOT_FOUND
+        uint64_t fsz = (uint64_t)vf->data.size();
+        uint64_t toCopy = (off < fsz) ? std::min<uint64_t>(sz, fsz - off) : 0;
+        if (toCopy && dst) memcpy(dst, vf->data.data() + off, (size_t)toCopy);
+        if (nread) *nread = toCopy;
+        return 0;
+    }
+    static int32_t __cdecl VirtReadFileAsync(void* inst, uint32_t, void*, const char* path, uint64_t off, void* dst, uint64_t sz, uint64_t* nread) {
+        return VirtReadFile(inst, path, off, dst, sz, nread);
+    }
+    static int32_t __cdecl VirtGetNativePath(void*, const char*, uint64_t) { return 3; }
+    static int32_t __cdecl VirtFileSize(void*, const char* path, uint64_t* outSz) {
+        const VirtualFile* vf = FindVirtFile(path);
+        if (!vf) return 3;
+        if (outSz) *outSz = (uint64_t)vf->data.size();
+        return 0;
+    }
+    static int32_t __cdecl VirtFileSizeAsync(void* inst, uint32_t, void*, const char* path, uint64_t* outSz) {
+        return VirtFileSize(inst, path, outSz);
+    }
+    static int32_t __cdecl VirtFileInfo(void*, const char* path, SVfsFileInfo* outInfo) {
+        const VirtualFile* vf = FindVirtFile(path);
+        if (!vf) return 3;
+        if (outInfo) {
+            outInfo->m_ProviderName = 0x76697274u; // 'virt'
+            outInfo->m_Pad = 0;
+            outInfo->m_Size = (uint64_t)vf->data.size();
+            outInfo->m_Offset = 0;
+        }
+        return 0;
+    }
+    static int32_t __cdecl VirtFileInfoAsync(void* inst, uint32_t, void*, const char* path, SVfsFileInfo* outInfo) {
+        return VirtFileInfo(inst, path, outInfo);
+    }
+    static int32_t __cdecl VirtSetEventCallback(void*, void*, void*) { return 0; }
+    static int32_t __cdecl VirtCancelAsyncRequest(void*, uint32_t) { return 0; }
+    static int32_t __cdecl VirtListDir(void*, const char*, void*, void*) { return 0; }
+
+    static IVfsProvider g_VirtProvider = {
+        1, 99,
+        VirtMount, VirtUnmount,
+        VirtReadFile, VirtReadFileAsync,
+        VirtGetNativePath,
+        VirtFileSize, VirtFileSizeAsync,
+        VirtFileInfo, VirtFileInfoAsync,
+        VirtSetEventCallback, VirtCancelAsyncRequest, VirtListDir
+    };
+
+    typedef int32_t (__cdecl* VfsFileSize_t)(void* vfs, const char* path, uint64_t* outSz);
+    typedef int32_t (__cdecl* VfsReadFile_t)(void* vfs, const char* path, uint64_t off, void* dst, uint64_t sz, uint64_t* nread);
+    typedef void    (__cdecl* TArrayHelperSetCapacity_t)(void* alloc, void* arr, uint32_t elemSz, uint32_t align, uint64_t cap);
+
+    static bool ReadVfsWholeFile(void* vfs, const char* path, std::vector<uint8_t>& out) {
+        if (!vfs || !path) return false;
+        auto fnSz   = (VfsFileSize_t)(g_ExeBase + g_Addr_F8B8B0);
+        auto fnRead = (VfsReadFile_t)(g_ExeBase + g_Addr_F8BDC0);
+        uint64_t sz = 0, nread = 0;
+        if (fnSz(vfs, path, &sz) != 0 || sz == 0 || sz > 64ULL * 1024 * 1024) return false;
+        out.resize((size_t)sz);
+        if (fnRead(vfs, path, 0, out.data(), sz, &nread) != 0 || nread != sz) {
+            out.clear();
+            return false;
+        }
+        return true;
+    }
+
+    template <typename T>
+    static T Rd(const std::vector<uint8_t>& b, size_t off) {
+        T v{};
+        if (off + sizeof(T) <= b.size()) memcpy(&v, b.data() + off, sizeof(T));
+        return v;
+    }
+    template <typename T>
+    static void Wr(std::vector<uint8_t>& b, size_t off, T v) {
+        if (off + sizeof(T) <= b.size()) memcpy(b.data() + off, &v, sizeof(T));
+    }
+
+    static size_t FindRtpcChildHdr(const std::vector<uint8_t>& buf, uint32_t doff, uint16_t np, uint16_t nc, uint32_t key) {
+        size_t chOff = ((size_t)doff + (size_t)np * 9 + 3) & ~size_t(3);
+        for (size_t i = 0; i < nc; ++i) {
+            size_t h = chOff + i * 12;
+            if (h + 12 <= buf.size() && Rd<uint32_t>(buf, h) == key) return h;
+        }
+        return SIZE_MAX;
+    }
+
+    static bool CiContains(const char* hay, const char* needle) {
+        if (!hay || !needle || !*needle) return false;
+        size_t nlen = strlen(needle);
+        for (; *hay; ++hay) {
+            if (_strnicmp(hay, needle, nlen) == 0) return true;
+        }
+        return false;
+    }
+
+    static bool CloneRpgInRtpcContainer(std::vector<uint8_t>& buf, size_t listHdrOff, const char* pathForLog) {
+        if (listHdrOff + 12 > buf.size()) return false;
+        uint32_t c0Doff = Rd<uint32_t>(buf, listHdrOff + 4);
+        uint16_t c0Np   = Rd<uint16_t>(buf, listHdrOff + 8);
+        uint16_t c0Nc   = Rd<uint16_t>(buf, listHdrOff + 10);
+        size_t   c0ChOff = ((size_t)c0Doff + (size_t)c0Np * 9 + 3) & ~size_t(3);
+        if (c0ChOff + (size_t)c0Nc * 12 > buf.size()) return false;
+
+        uint32_t rpgHash = JenkinsHash("wpn_061_rpg", true);
+        uint32_t nukeTagKey = JenkinsHash("wpn_nuke_launcher", true);
+        size_t srcIdx = SIZE_MAX;
+        size_t hashFallbackIdx = SIZE_MAX;
+        for (size_t i = 0; i < c0Nc; ++i) {
+            size_t hdrOff = c0ChOff + i * 12;
+            uint32_t ckey = Rd<uint32_t>(buf, hdrOff);
+            if (ckey == nukeTagKey) {
+                AddVirtFile(pathForLog, std::move(buf));
+                DiagLog("[Nuke] %s already contains wpn_nuke_launcher (0x%08x), preserving", pathForLog, nukeTagKey);
+                return true;
+            }
+            if (ckey == rpgHash && hashFallbackIdx == SIZE_MAX) hashFallbackIdx = i;
+            uint32_t doff = Rd<uint32_t>(buf, hdrOff + 4);
+            uint16_t np   = Rd<uint16_t>(buf, hdrOff + 8);
+            bool hasEe = false;
+            for (uint16_t j = 0; j < np; ++j) {
+                size_t poff = (size_t)doff + j * 9;
+                if (poff + 9 > buf.size()) break;
+                uint32_t ph = Rd<uint32_t>(buf, poff);
+                if (buf[poff + 8] == 3) {
+                    uint32_t soff = Rd<uint32_t>(buf, poff + 4);
+                    if (soff < buf.size()) {
+                        const char* s = (const char*)(buf.data() + soff);
+                        if (ph == 0x399ed0edu && CiContains(s, "wpn_061_rpg.ee")) { hasEe = true; break; }
+                    }
+                }
+            }
+            if (hasEe && (srcIdx == SIZE_MAX || ckey == rpgHash)) {
+                srcIdx = i;
+            }
+        }
+        if (srcIdx == SIZE_MAX) srcIdx = hashFallbackIdx;
+        if (srcIdx == SIZE_MAX) return false;
+
+        size_t srcHdrOff = c0ChOff + srcIdx * 12;
+        uint32_t srcDoff = Rd<uint32_t>(buf, srcHdrOff + 4);
+        uint16_t srcNp   = Rd<uint16_t>(buf, srcHdrOff + 8);
+        uint16_t srcNc   = Rd<uint16_t>(buf, srcHdrOff + 10);
+
+        auto appendStr = [&](const char* str) -> uint32_t {
+            while (buf.size() & 3) buf.push_back(0);
+            uint32_t off = (uint32_t)buf.size();
+            buf.insert(buf.end(), (const uint8_t*)str, (const uint8_t*)str + strlen(str) + 1);
+            while (buf.size() & 3) buf.push_back(0);
+            return off;
+        };
+        uint32_t dbgNameOff  = appendStr("wpn_nuke_launcher");
+        uint32_t eePathOff   = appendStr("editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.ee");
+        uint32_t nukeTagsOff = appendStr("weapon, wpn_nuke_launcher");
+
+        uint32_t newSrcDoff = (uint32_t)buf.size();
+        size_t srcPropSpan = ((size_t)srcNp * 9 + 3) & ~size_t(3);
+        if ((size_t)srcDoff + srcPropSpan > buf.size()) return false;
+        buf.insert(buf.end(), buf.begin() + srcDoff, buf.begin() + srcDoff + srcPropSpan);
+        for (uint16_t j = 0; j < srcNp; ++j) {
+            size_t poff = (size_t)newSrcDoff + j * 9;
+            uint32_t ph = Rd<uint32_t>(buf, poff);
+            uint8_t pt = buf[poff + 8];
+            if (ph == 0xf71c2a21u && pt == 3) Wr<uint32_t>(buf, poff + 4, dbgNameOff);
+            else if (ph == 0x399ed0edu && pt == 3) Wr<uint32_t>(buf, poff + 4, eePathOff);
+            else if (ph == 0x54697e8fu && pt == 3) Wr<uint32_t>(buf, poff + 4, nukeTagsOff);
+        }
+
+        uint32_t newC0Doff = (uint32_t)buf.size();
+        size_t c0PropSpan = ((size_t)c0Np * 9 + 3) & ~size_t(3);
+        if ((size_t)c0Doff + c0PropSpan > buf.size()) return false;
+        buf.insert(buf.end(), buf.begin() + c0Doff, buf.begin() + c0Doff + c0PropSpan);
+
+        // Keep child keys strictly ascending (RTPC/CRuntimeContainer requirement)
+        struct ChildRec { uint32_t key, doff; uint16_t np, nc; };
+        std::vector<ChildRec> children;
+        children.reserve((size_t)c0Nc + 1);
+        for (size_t i = 0; i < c0Nc; ++i) {
+            size_t h = c0ChOff + i * 12;
+            children.push_back({ Rd<uint32_t>(buf, h), Rd<uint32_t>(buf, h + 4), Rd<uint16_t>(buf, h + 8), Rd<uint16_t>(buf, h + 10) });
+        }
+        ChildRec nukeRec{ nukeTagKey, newSrcDoff, srcNp, srcNc > 0 ? uint16_t(0) : srcNc };
+        auto it = std::lower_bound(children.begin(), children.end(), nukeTagKey,
+                                   [](const ChildRec& a, uint32_t k) { return a.key < k; });
+        children.insert(it, nukeRec);
+        for (const auto& ch : children) {
+            size_t h = buf.size();
+            buf.resize(h + 12, 0);
+            Wr<uint32_t>(buf, h + 0, ch.key);
+            Wr<uint32_t>(buf, h + 4, ch.doff);
+            Wr<uint16_t>(buf, h + 8, ch.np);
+            Wr<uint16_t>(buf, h + 10, ch.nc);
+        }
+
+        Wr<uint32_t>(buf, listHdrOff + 4, newC0Doff);
+        Wr<uint16_t>(buf, listHdrOff + 10, (uint16_t)(c0Nc + 1));
+
+        AddVirtFile(pathForLog, std::move(buf));
+        DiagLog("[Nuke] Built virtual %s (%d -> %d entries, key=0x%08x, srcNc=%u)", pathForLog, c0Nc, c0Nc + 1, nukeTagKey, (unsigned)srcNc);
+        return true;
+    }
+
+    static bool BuildSpawnExpentityDefs(void* vfs) {
+        // First scan real budget pool definition containers (non-prototype budgets keep all weapon tags)
+        std::vector<uint8_t> pools;
+        if (ReadVfsWholeFile(vfs, "settings/spawn_budget_pools.bin", pools) && pools.size() >= 32) {
+            uint32_t pDoff = Rd<uint32_t>(pools, 12);
+            uint16_t pNp   = Rd<uint16_t>(pools, 16);
+            uint16_t pNc   = Rd<uint16_t>(pools, 18);
+            size_t   c1Hdr = FindRtpcChildHdr(pools, pDoff, pNp, pNc, 0x83647b76u);
+            if (c1Hdr != SIZE_MAX) {
+                size_t c2Hdr = FindRtpcChildHdr(pools, Rd<uint32_t>(pools, c1Hdr + 4), Rd<uint16_t>(pools, c1Hdr + 8), Rd<uint16_t>(pools, c1Hdr + 10), 0x8eb4f892u);
+                if (c2Hdr != SIZE_MAX) {
+                    uint32_t bDoff = Rd<uint32_t>(pools, c2Hdr + 4);
+                    uint16_t bNp   = Rd<uint16_t>(pools, c2Hdr + 8);
+                    uint16_t bNc   = Rd<uint16_t>(pools, c2Hdr + 10);
+                    size_t   bCh   = ((size_t)bDoff + (size_t)bNp * 9 + 3) & ~size_t(3);
+                    for (size_t bi = 0; bi < bNc; ++bi) {
+                        size_t bh = bCh + bi * 12;
+                        if (bh + 12 > pools.size()) break;
+                        uint32_t doff = Rd<uint32_t>(pools, bh + 4);
+                        uint16_t np   = Rd<uint16_t>(pools, bh + 8);
+                        for (uint16_t j = 0; j < np; ++j) {
+                            size_t p = (size_t)doff + j * 9;
+                            if (p + 9 <= pools.size() && Rd<uint32_t>(pools, p) == 0x9a972f56u && pools[p + 8] == 3) {
+                                uint32_t so = Rd<uint32_t>(pools, p + 4);
+                                if (so < pools.size()) {
+                                    const char* extPath = (const char*)(pools.data() + so);
+                                    std::vector<uint8_t> ebuf;
+                                    if (extPath[0] && ReadVfsWholeFile(vfs, extPath, ebuf) && ebuf.size() >= 32) {
+                                        size_t s1 = FindRtpcChildHdr(ebuf, Rd<uint32_t>(ebuf, 12), Rd<uint16_t>(ebuf, 16), Rd<uint16_t>(ebuf, 18), 0x83647b76u);
+                                        if (s1 != SIZE_MAX) {
+                                            size_t s2 = FindRtpcChildHdr(ebuf, Rd<uint32_t>(ebuf, s1 + 4), Rd<uint16_t>(ebuf, s1 + 8), Rd<uint16_t>(ebuf, s1 + 10), 0x0b621fb6u);
+                                            if (s2 != SIZE_MAX && CloneRpgInRtpcContainer(ebuf, s2, extPath)) {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: prototype expentity container
+        std::vector<uint8_t> buf;
+        if (!ReadVfsWholeFile(vfs, "packages/main/spawn_expentity_defs.bin", buf) || buf.size() < 32) {
+            DiagLog("[Nuke] Failed to read spawn_expentity_defs.bin");
+            return false;
+        }
+        uint32_t rootDoff = Rd<uint32_t>(buf, 12);
+        uint16_t rootNp   = Rd<uint16_t>(buf, 16);
+        uint16_t rootNc   = Rd<uint16_t>(buf, 18);
+        if (rootNc == 0) return false;
+        size_t child0HdrOff = ((size_t)rootDoff + rootNp * 9 + 3) & ~size_t(3);
+        return CloneRpgInRtpcContainer(buf, child0HdrOff, "packages/main/spawn_expentity_defs.bin");
+    }
+
+    // Relocates ADF section headers & instance descriptors after inserting (shift) at origInsertAt
+    // and (extraStr) at origInst0End (post-shift: origInst0End + shift), regardless of chunk ordering.
+    static void AdjustAdfHeadersAfterTwoInserts(std::vector<uint8_t>& buf, uint32_t origIcnt, uint32_t origIoff,
+                                                uint32_t origToff, uint32_t origShoff, uint32_t origNoff, uint32_t origTotal,
+                                                size_t origInsertAt, size_t origInst0End, uint32_t origInst0Sz,
+                                                uint32_t shift, uint32_t extraStr) {
+        auto adj = [&](uint32_t off) -> uint32_t {
+            if (off >= origInst0End) return off + shift + extraStr;
+            if (off >= origInsertAt) return off + shift;
+            return off;
+        };
+        uint32_t newIoff  = adj(origIoff);
+        uint32_t newToff  = adj(origToff);
+        uint32_t newShoff = origShoff ? adj(origShoff) : 0;
+        uint32_t newNoff  = origNoff ? adj(origNoff) : 0;
+        Wr<uint32_t>(buf, newIoff + 8,  adj(Rd<uint32_t>(buf, newIoff + 8)));
+        Wr<uint32_t>(buf, newIoff + 12, origInst0Sz + shift + extraStr);
+        for (uint32_t k = 1; k < origIcnt; ++k) {
+            size_t rec = (size_t)newIoff + (size_t)k * 24;
+            if (rec + 16 <= buf.size()) {
+                Wr<uint32_t>(buf, rec + 8, adj(Rd<uint32_t>(buf, rec + 8)));
+            }
+        }
+        Wr<uint32_t>(buf, 12, newIoff);
+        Wr<uint32_t>(buf, 20, newToff);
+        if (origShoff) Wr<uint32_t>(buf, 28, newShoff);
+        if (origNoff)  Wr<uint32_t>(buf, 36, newNoff);
+        Wr<uint32_t>(buf, 40, origTotal + shift + extraStr);
+    }
+
+    static bool BuildExpentityInfoCollection(void* vfs) {
+        std::vector<uint8_t> buf;
+        if (!ReadVfsWholeFile(vfs, "packages/main/expentity_info_collection.expentity_infoc", buf) || buf.size() < 44) {
+            DiagLog("[Nuke] Failed to read expentity_info_collection.expentity_infoc");
+            return false;
+        }
+        uint32_t icnt  = Rd<uint32_t>(buf, 8);
+        uint32_t ioff  = Rd<uint32_t>(buf, 12);
+        uint32_t toff  = Rd<uint32_t>(buf, 20);
+        uint32_t shoff = Rd<uint32_t>(buf, 28);
+        uint32_t noff  = Rd<uint32_t>(buf, 36);
+        uint32_t total = Rd<uint32_t>(buf, 40);
+        if (icnt == 0 || (size_t)ioff + 24 > buf.size()) return false;
+        uint32_t inst0Off = Rd<uint32_t>(buf, ioff + 8);
+        uint32_t inst0Sz  = Rd<uint32_t>(buf, ioff + 12);
+        if ((size_t)inst0Off + inst0Sz > buf.size() || inst0Sz < 16) return false;
+        uint32_t arrRel   = Rd<uint32_t>(buf, inst0Off);
+        uint64_t cnt      = Rd<uint64_t>(buf, inst0Off + 8);
+
+        size_t arrOff = (size_t)inst0Off + arrRel;
+        if (arrOff + (size_t)cnt * 0x60 > buf.size()) return false;
+        const uint32_t rpgHash = JenkinsHash("wpn_061_rpg", true);
+        size_t idxRpg = SIZE_MAX;
+        for (size_t i = 0; i < cnt; ++i) {
+            uint32_t h = Rd<uint32_t>(buf, arrOff + i * 0x60 + 8);
+            if (h == kNukeWeaponHash) {
+                AddVirtFile("packages/main/expentity_info_collection.expentity_infoc", std::move(buf));
+                DiagLog("[Nuke] expentity_info_collection already contains wpn_nuke_launcher, preserving");
+                return true;
+            }
+            if (h == rpgHash && idxRpg == SIZE_MAX) idxRpg = i;
+        }
+        if (idxRpg == SIZE_MAX) {
+            DiagLog("[Nuke] wpn_061_rpg not found in expentity_info_collection.expentity_infoc");
+            return false;
+        }
+
+        uint8_t cloned[0x60];
+        memcpy(cloned, buf.data() + arrOff + idxRpg * 0x60, 0x60);
+
+        const uint32_t shift = 0x60; // One 96B ExpentityInfo element (16B aligned)
+        uint32_t insertRel = (uint32_t)(arrRel + cnt * 0x60);
+        size_t origInsertAt = (size_t)inst0Off + insertRel;
+        size_t origInst0End = (size_t)inst0Off + inst0Sz;
+        buf.insert(buf.begin() + origInsertAt, shift, 0);
+
+        size_t postArrOff = (origInsertAt < arrOff) ? (arrOff + shift) : arrOff;
+        for (size_t i = 0; i < cnt; ++i) {
+            size_t e = postArrOff + i * 0x60;
+            for (size_t s = 0; s <= 0x20; s += 0x10) {
+                uint32_t rel = Rd<uint32_t>(buf, e + s);
+                if (rel >= insertRel) Wr<uint32_t>(buf, e + s, rel + shift);
+            }
+        }
+        memcpy(buf.data() + origInsertAt, cloned, 0x60);
+
+        const char* nukeName = "wpn_nuke_launcher";
+        const char* nukeEe   = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.ee";
+        size_t strBytes = strlen(nukeName) + 1 + strlen(nukeEe) + 1;
+        uint32_t extraStr = (uint32_t)((strBytes + 15) & ~size_t(15));
+        size_t strInsertAt = origInst0End + shift;
+        buf.insert(buf.begin() + strInsertAt, extraStr, 0);
+
+        uint32_t nameRel = inst0Sz + shift;
+        uint32_t eeRel   = nameRel + (uint32_t)strlen(nukeName) + 1;
+        memcpy(buf.data() + inst0Off + nameRel, nukeName, strlen(nukeName) + 1);
+        memcpy(buf.data() + inst0Off + eeRel, nukeEe, strlen(nukeEe) + 1);
+
+        Wr<uint32_t>(buf, origInsertAt + 0x00, nameRel);
+        Wr<uint32_t>(buf, origInsertAt + 0x08, JenkinsHash(nukeName, true));
+        Wr<uint32_t>(buf, origInsertAt + 0x10, eeRel);
+        Wr<uint32_t>(buf, origInsertAt + 0x18, JenkinsHash(nukeEe, true));
+        uint32_t clsRel = Rd<uint32_t>(buf, origInsertAt + 0x20);
+        if (clsRel >= insertRel) Wr<uint32_t>(buf, origInsertAt + 0x20, clsRel + shift);
+
+        Wr<uint64_t>(buf, inst0Off + 8, cnt + 1);
+        AdjustAdfHeadersAfterTwoInserts(buf, icnt, ioff, toff, shoff, noff, total,
+                                         origInsertAt, origInst0End, inst0Sz, shift, extraStr);
+
+        AddVirtFile("packages/main/expentity_info_collection.expentity_infoc", std::move(buf));
+        DiagLog("[Nuke] Built virtual expentity_info_collection.expentity_infoc (%llu -> %llu entries)",
+                (unsigned long long)cnt, (unsigned long long)(cnt + 1));
+        return true;
+    }
+
+    static bool BuildWeaponsWeaponsc(void* vfs) {
+        std::vector<uint8_t> buf;
+        if (!ReadVfsWholeFile(vfs, "packages/main/weapons.weaponsc", buf) || buf.size() < 44) {
+            DiagLog("[Nuke] Failed to read weapons.weaponsc");
+            return false;
+        }
+        uint32_t icnt  = Rd<uint32_t>(buf, 8);
+        uint32_t ioff  = Rd<uint32_t>(buf, 12);
+        uint32_t toff  = Rd<uint32_t>(buf, 20);
+        uint32_t shoff = Rd<uint32_t>(buf, 28);
+        uint32_t noff  = Rd<uint32_t>(buf, 36);
+        uint32_t total = Rd<uint32_t>(buf, 40);
+        if (icnt == 0 || (size_t)ioff + 24 > buf.size()) return false;
+        uint32_t inst0Off = Rd<uint32_t>(buf, ioff + 8);
+        uint32_t inst0Sz  = Rd<uint32_t>(buf, ioff + 12);
+        if ((size_t)inst0Off + inst0Sz > buf.size() || inst0Sz < 16) return false;
+        uint32_t arrRel   = Rd<uint32_t>(buf, inst0Off);
+        uint64_t cnt      = Rd<uint64_t>(buf, inst0Off + 8);
+
+        size_t arrOff = (size_t)inst0Off + arrRel;
+        if (arrOff + (size_t)cnt * 24 > buf.size()) return false;
+        uint32_t nukeEeHash = JenkinsHash("editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.ee", true);
+        size_t idx61 = SIZE_MAX;
+        int16_t maxWid = 63;
+        bool wid64Taken = false;
+        for (size_t i = 0; i < cnt; ++i) {
+            uint32_t rid = Rd<uint32_t>(buf, arrOff + i * 24 + 0);
+            int16_t  wid = Rd<int16_t>(buf, arrOff + i * 24 + 4);
+            if (rid == nukeEeHash) {
+                g_NukeWeaponId = wid;
+                AddVirtFile("packages/main/weapons.weaponsc", std::move(buf));
+                DiagLog("[Nuke] weapons.weaponsc already contains wpn_nuke_launcher (wid=%d), preserving", (int)wid);
+                return true;
+            }
+            if (wid == 61) idx61 = i;
+            if (wid == 64) wid64Taken = true;
+            if (wid > maxWid) maxWid = wid;
+        }
+        if (idx61 == SIZE_MAX) {
+            DiagLog("[Nuke] WeaponID 61 not found in weapons.weaponsc");
+            return false;
+        }
+        g_NukeWeaponId = wid64Taken ? (int16_t)(maxWid + 1) : (int16_t)64;
+
+        uint32_t basePriRel = Rd<uint32_t>(buf, arrOff + idx61 * 24 + 8);
+        if (basePriRel && (size_t)inst0Off + basePriRel < buf.size()) {
+            const char* bp = (const char*)(buf.data() + inst0Off + basePriRel);
+            if (bp[0]) g_BaseWtunePath = NormalizeVfsPath(bp);
+        }
+
+        uint8_t cloned24[24];
+        memcpy(cloned24, buf.data() + arrOff + idx61 * 24, 24);
+
+        const uint32_t shift = 0x20; // Keep 16-byte alignment after inserting one 24B entry
+        uint32_t insertRel = (uint32_t)(arrRel + cnt * 24);
+        size_t origInsertAt = (size_t)inst0Off + insertRel;
+        size_t origInst0End = (size_t)inst0Off + inst0Sz;
+        buf.insert(buf.begin() + origInsertAt, shift, 0);
+
+        size_t postArrOff = (origInsertAt < arrOff) ? (arrOff + shift) : arrOff;
+        for (size_t i = 0; i < cnt; ++i) {
+            size_t e = postArrOff + i * 24;
+            uint32_t p = Rd<uint32_t>(buf, e + 8);
+            uint32_t s = Rd<uint32_t>(buf, e + 16);
+            if (p >= insertRel) Wr<uint32_t>(buf, e + 8, p + shift);
+            if (s >= insertRel) Wr<uint32_t>(buf, e + 16, s + shift);
+        }
+
+        const char* nukePri = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.wtunec";
+        const char* nukeSec = "";
+        size_t strBytes = strlen(nukePri) + 1 + strlen(nukeSec) + 1;
+        uint32_t extraStr = (uint32_t)((strBytes + 15) & ~size_t(15));
+        size_t strInsertAt = origInst0End + shift;
+        buf.insert(buf.begin() + strInsertAt, extraStr, 0);
+
+        uint32_t priRel = inst0Sz + shift;
+        uint32_t secRel = priRel + (uint32_t)strlen(nukePri) + 1;
+        memcpy(buf.data() + inst0Off + priRel, nukePri, strlen(nukePri) + 1);
+        memcpy(buf.data() + inst0Off + secRel, nukeSec, strlen(nukeSec) + 1);
+
+        memcpy(buf.data() + origInsertAt, cloned24, 24);
+        Wr<uint32_t>(buf, origInsertAt + 0, nukeEeHash);
+        Wr<int16_t>(buf, origInsertAt + 4, g_NukeWeaponId);
+        Wr<uint64_t>(buf, origInsertAt + 8,  (uint64_t)priRel);
+        Wr<uint64_t>(buf, origInsertAt + 16, (uint64_t)secRel);
+
+        Wr<uint64_t>(buf, inst0Off + 8, cnt + 1);
+        AdjustAdfHeadersAfterTwoInserts(buf, icnt, ioff, toff, shoff, noff, total,
+                                         origInsertAt, origInst0End, inst0Sz, shift, extraStr);
+
+        AddVirtFile("packages/main/weapons.weaponsc", std::move(buf));
+        DiagLog("[Nuke] Built virtual weapons.weaponsc (count=%llu -> %llu, rid=0x%08x, wid=%d, baseWtune=%s)",
+                (unsigned long long)cnt, (unsigned long long)(cnt + 1), nukeEeHash, (int)g_NukeWeaponId, g_BaseWtunePath.c_str());
+        return true;
+    }
+
+    static void ScanEpeTuningHashes(const std::vector<uint8_t>& epe, size_t nodeOff,
+                                    uint32_t& outPrimaryWtuneHash, uint32_t& outFtuneHash) {
+        if (nodeOff + 12 > epe.size()) return;
+        uint32_t doff = Rd<uint32_t>(epe, nodeOff + 4);
+        uint16_t np   = Rd<uint16_t>(epe, nodeOff + 8);
+        uint16_t nc   = Rd<uint16_t>(epe, nodeOff + 10);
+        const char* nodeName = nullptr;
+        uint32_t wtuneHash = 0, ftuneHash = 0;
+        for (uint16_t j = 0; j < np; ++j) {
+            size_t p = (size_t)doff + j * 9;
+            if (p + 9 > epe.size()) break;
+            uint32_t ph = Rd<uint32_t>(epe, p);
+            uint8_t  pt = epe[p + 8];
+            if (ph == 0xd31ab684u && pt == 3) {
+                uint32_t soff = Rd<uint32_t>(epe, p + 4);
+                if (soff < epe.size()) nodeName = (const char*)(epe.data() + soff);
+            } else if (ph == 0xaa7096c9u && pt == 1) {
+                wtuneHash = Rd<uint32_t>(epe, p + 4);
+            } else if (ph == 0x67e1b2e1u && pt == 1) {
+                ftuneHash = Rd<uint32_t>(epe, p + 4);
+            }
+        }
+        if (nodeName && strcmp(nodeName, "primary_module") == 0 && wtuneHash) outPrimaryWtuneHash = wtuneHash;
+        if (nodeName && strcmp(nodeName, "explosion_force_pulse") == 0 && ftuneHash) outFtuneHash = ftuneHash;
+        size_t chOff = ((size_t)doff + (size_t)np * 9 + 3) & ~size_t(3);
+        for (uint16_t i = 0; i < nc; ++i) ScanEpeTuningHashes(epe, chOff + i * 12, outPrimaryWtuneHash, outFtuneHash);
+    }
+
+    static void PatchRtpcNode(std::vector<uint8_t>& epe, size_t nodeOff, uint32_t nukeNameOff,
+                              uint32_t nukeFtuneHash, uint32_t extraPrimaryWtuneHash, uint32_t baseWtuneHash) {
+        if (nodeOff + 12 > epe.size()) return;
+        uint32_t doff = Rd<uint32_t>(epe, nodeOff + 4);
+        uint16_t np   = Rd<uint16_t>(epe, nodeOff + 8);
+        uint16_t nc   = Rd<uint16_t>(epe, nodeOff + 10);
+
+        bool isForcePulse = false;
+        bool isPrimaryMod = false;
+        for (uint16_t j = 0; j < np; ++j) {
+            size_t p = (size_t)doff + j * 9;
+            if (p + 9 > epe.size()) break;
+            if (Rd<uint32_t>(epe, p) == 0xd31ab684u && epe[p + 8] == 3) {
+                uint32_t soff = Rd<uint32_t>(epe, p + 4);
+                if (soff < epe.size()) {
+                    const char* s = (const char*)(epe.data() + soff);
+                    if (strcmp(s, "explosion_force_pulse") == 0) isForcePulse = true;
+                    else if (strcmp(s, "primary_module") == 0) isPrimaryMod = true;
+                    else if (_stricmp(s, "wpn_061_rpg") == 0) Wr<uint32_t>(epe, p + 4, nukeNameOff);
+                }
+            }
+        }
+
+        const uint32_t rpgNameHash   = JenkinsHash("wpn_061_rpg", true);
+        const uint32_t rpgWtuneHash  = JenkinsHash("editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.wtunec", true);
+        const uint32_t nukeWtuneHash = JenkinsHash("editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.wtunec", true);
+        for (uint16_t j = 0; j < np; ++j) {
+            size_t p = (size_t)doff + j * 9;
+            if (p + 9 > epe.size()) break;
+            uint32_t ph = Rd<uint32_t>(epe, p);
+            uint8_t  pt = epe[p + 8];
+            if (ph == 0x0689612eu && pt == 1 && Rd<uint32_t>(epe, p + 4) == 61u) {
+                Wr<uint32_t>(epe, p + 4, (uint32_t)g_NukeWeaponId);
+            } else if (ph == 0x7d3a868cu && pt == 1 && Rd<uint32_t>(epe, p + 4) == rpgNameHash) {
+                Wr<uint32_t>(epe, p + 4, kNukeWeaponHash);
+            } else if (ph == 0xaa7096c9u && pt == 1) {
+                uint32_t cur = Rd<uint32_t>(epe, p + 4);
+                if (isPrimaryMod || cur == rpgWtuneHash || cur == baseWtuneHash || (extraPrimaryWtuneHash && cur == extraPrimaryWtuneHash)) {
+                    Wr<uint32_t>(epe, p + 4, nukeWtuneHash);
+                }
+            } else if (ph == 0xab772f9cu && pt == 11) {
+                uint32_t voff = Rd<uint32_t>(epe, p + 4);
+                if ((size_t)voff + 4 + 640 <= epe.size() && Rd<uint32_t>(epe, voff) == 640u) {
+                    for (size_t idx = 0; idx < 32; ++idx) {
+                        size_t slot = (size_t)voff + 4 + idx * 20;
+                        Wr<uint32_t>(epe, slot + 0, kSphereTankVfxNewHash);
+                        for (size_t g = 0; g < 4; ++g)
+                            Wr<uint32_t>(epe, slot + 4 + g * 4, kSphereTankSfxGuid[g]);
+                    }
+                }
+            } else if (isForcePulse) {
+                auto setF = [&](float f) { uint32_t u = 0; memcpy(&u, &f, 4); Wr<uint32_t>(epe, p + 4, u); };
+                if      (ph == 0x530046b3u && pt == 2) setF(g_Cfg.forceRadius);
+                else if (ph == 0x74896a12u && pt == 2) setF(g_Cfg.despawnRadius);
+                else if (ph == 0x24872388u && pt == 2) setF(g_Cfg.explosionPressure);
+                else if (ph == 0x9865e7f2u && pt == 2) setF(g_Cfg.explosionSpeed);
+                else if (ph == 0x060aaa81u && pt == 2) setF(60.0f);   // m_ExplosionForceDirectionNoiseAngle
+                else if (ph == 0x57f1b4e1u && pt == 2) setF(0.25f);   // m_ExplosionHitPosToCOMNoiseValue
+                else if (ph == 0xf39ec6eau && pt == 2) setF(0.1f);    // m_ExplosionHitPosToCOMScaler
+                else if (ph == 0x4912fc04u && pt == 1) Wr<uint32_t>(epe, p + 4, g_Cfg.fireDamage ? 1u : 0u);
+                else if (ph == 0x6b47b5c3u && pt == 1) Wr<uint32_t>(epe, p + 4, 0u);
+                else if (ph == 0x5af29116u && pt == 1) Wr<uint32_t>(epe, p + 4, 0u);           // m_MoveToPlayer
+                else if (ph == 0xa1b0daf9u && pt == 1) Wr<uint32_t>(epe, p + 4, 0xffffffffu);  // explosion_preset
+                else if (ph == 0x67e1b2e1u && pt == 1) Wr<uint32_t>(epe, p + 4, nukeFtuneHash);
+            }
+        }
+
+        size_t chOff = ((size_t)doff + (size_t)np * 9 + 3) & ~size_t(3);
+        for (uint16_t i = 0; i < nc; ++i)
+            PatchRtpcNode(epe, chOff + i * 12, nukeNameOff, nukeFtuneHash, extraPrimaryWtuneHash, baseWtuneHash);
+    }
+
+    struct SarcEntryBuild {
+        std::string path;
+        uint32_t pathHash;
+        uint32_t extHash;
+        uint32_t reportedSize;
+        std::vector<uint8_t> embedded;
+    };
+
+    static bool ParseSarcEntries(const std::vector<uint8_t>& ee, std::vector<SarcEntryBuild>& out) {
+        if (ee.size() < 20 || memcmp(ee.data() + 4, "SARC", 4) != 0) return false;
+        uint32_t tocLen = Rd<uint32_t>(ee, 12);
+        uint32_t strLen = Rd<uint32_t>(ee, 16);
+        size_t strOff = 20;
+        size_t entOff = strOff + strLen;
+        size_t tocEnd = 16 + (size_t)tocLen;
+        if (tocEnd > ee.size() || entOff > tocEnd) return false;
+        size_t n = (tocEnd - entOff) / 20;
+        out.clear();
+        out.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            size_t p = entOff + i * 20;
+            uint32_t so = Rd<uint32_t>(ee, p + 0);
+            uint32_t doff = Rd<uint32_t>(ee, p + 4);
+            uint32_t sz = Rd<uint32_t>(ee, p + 8);
+            uint32_t ph = Rd<uint32_t>(ee, p + 12);
+            uint32_t eh = Rd<uint32_t>(ee, p + 16);
+            std::string name = (strOff + so < ee.size()) ? (const char*)(ee.data() + strOff + so) : "";
+            SarcEntryBuild eb{ NormalizeVfsPath(name.c_str()), ph, eh, sz, {} };
+            if (doff > 0 && (size_t)doff + sz <= ee.size()) {
+                eb.embedded.assign(ee.begin() + doff, ee.begin() + doff + sz);
+            }
+            out.push_back(std::move(eb));
+        }
+        return true;
+    }
+
+    static std::vector<uint8_t> BuildSarcBlob(const std::vector<SarcEntryBuild>& entries) {
+        std::vector<uint8_t> strings;
+        std::vector<uint32_t> strOffs(entries.size());
+        for (size_t i = 0; i < entries.size(); ++i) {
+            strOffs[i] = (uint32_t)strings.size();
+            strings.insert(strings.end(), entries[i].path.begin(), entries[i].path.end());
+            strings.push_back(0);
+        }
+        size_t entOff = 20 + strings.size();
+        size_t entEnd = entOff + entries.size() * 20;
+        size_t dataStart = (entEnd + 15) & ~size_t(15);
+        uint32_t tocLen = (uint32_t)(dataStart - 16);
+
+        std::vector<uint8_t> out(dataStart, 0);
+        Wr<uint32_t>(out, 0, 4u);
+        memcpy(out.data() + 4, "SARC", 4);
+        Wr<uint32_t>(out, 8, 3u);
+        Wr<uint32_t>(out, 12, tocLen);
+        Wr<uint32_t>(out, 16, (uint32_t)strings.size());
+        if (!strings.empty()) memcpy(out.data() + 20, strings.data(), strings.size());
+
+        for (size_t i = 0; i < entries.size(); ++i) {
+            uint32_t doff = 0;
+            uint32_t rsz = entries[i].reportedSize;
+            if (!entries[i].embedded.empty()) {
+                while (out.size() & 15) out.push_back(0);
+                doff = (uint32_t)out.size();
+                rsz = (uint32_t)entries[i].embedded.size();
+                out.insert(out.end(), entries[i].embedded.begin(), entries[i].embedded.end());
+            }
+            size_t p = entOff + i * 20;
+            Wr<uint32_t>(out, p + 0, strOffs[i]);
+            Wr<uint32_t>(out, p + 4, doff);
+            Wr<uint32_t>(out, p + 8, rsz);
+            Wr<uint32_t>(out, p + 12, entries[i].pathHash);
+            Wr<uint32_t>(out, p + 16, entries[i].extHash);
+        }
+        return out;
+    }
+
+    // Shared writer for SFiringModuleTuning + player SFiringModuleMissileTuningBase
+    // Works on both ADF disk buffers and live runtime structs in memory.
+    static void ApplyConfigToTuningMem(uint8_t* tunPtr, uint8_t* mDataPtr, uint32_t mCnt, const NukeConfig& cfg) {
+        if (!tunPtr) return;
+        *(int32_t*)(tunPtr + 112) = std::max(1, cfg.magazineSize);
+        *(float*)  (tunPtr + 120) = std::max(0.05f, cfg.reloadTimeScale);
+        *(float*)  (tunPtr + 128) = std::max(1.0f, cfg.missileSpeed1);
+        *(float*)  (tunPtr + 136) = std::max(0.01f, cfg.fireInterval);
+        *(uint8_t*)(tunPtr + 140) = (uint8_t)std::clamp(cfg.burstCount, 0, 255);
+        *(float*)  (tunPtr + 144) = std::max(0.0f, cfg.burstCooldown);
+        *(uint8_t*)(tunPtr + 148) = 1; // m_should_take_ammo_per_projectile
+        *(uint8_t*)(tunPtr + 149) = cfg.fullAuto ? 1 : 0;
+        *(uint8_t*)(tunPtr + 184) = cfg.unlimitedAmmo ? 1 : 0;
+        if (mDataPtr) {
+            for (uint32_t mi = 0; mi < mCnt; ++mi) {
+                uint8_t* mbase = mDataPtr + (size_t)mi * 548 + 160;
+                *(float*)  (mbase + 4)  = std::max(0.0f, cfg.missileStage1Time);
+                *(float*)  (mbase + 12) = std::max(1.0f, cfg.missileSpeed1);
+                *(float*)  (mbase + 16) = std::max(1.0f, cfg.missileSpeed2);
+                *(float*)  (mbase + 28) = std::max(0.0f, cfg.turningSpeed);
+                *(float*)  (mbase + 40) = std::max(0.1f, cfg.detonationTime);
+                *(uint8_t*)(mbase + 48) = (uint8_t)std::clamp(cfg.missilesPerShot, 1, 255);
+                *(uint8_t*)(mbase + 60) = cfg.detonateOnImpact ? 1 : 0;
+                *(float*)  (mbase + 64) = cfg.gravity;
+            }
+        }
+    }
+
+    static void ApplyConfigToForcePulseSettingsMem(uint8_t* fpSettings, const NukeConfig& cfg) {
+        if (!fpSettings) return;
+        *(uint32_t*)(fpSettings + 0)  = (uint32_t)std::max(0, cfg.playerDamage);
+        *(float*)   (fpSettings + 4)  = std::max(0.0f, cfg.playerDamageRadius);
+        *(float*)   (fpSettings + 8)  = 0.25f;
+        *(float*)   (fpSettings + 12) = 0.25f;
+        *(uint32_t*)(fpSettings + 16) = (uint32_t)std::max(0, cfg.aiDamage);
+        *(float*)   (fpSettings + 20) = std::max(0.0f, cfg.aiDamageRadius);
+        *(float*)   (fpSettings + 24) = 0.25f;
+        *(float*)   (fpSettings + 28) = 0.25f;
+    }
+
+    static void PatchWtuneBuffer(std::vector<uint8_t>& wbuf, const NukeConfig& cfg) {
+        if (wbuf.size() < 44) return;
+        uint32_t ioff = Rd<uint32_t>(wbuf, 12);
+        if ((size_t)ioff + 16 > wbuf.size()) return;
+        uint32_t inst0Off = Rd<uint32_t>(wbuf, ioff + 8);
+        uint32_t inst0Sz  = Rd<uint32_t>(wbuf, ioff + 12);
+        if ((size_t)inst0Off + 192 > wbuf.size() || inst0Sz < 192) return;
+        uint32_t m_off = Rd<uint32_t>(wbuf, inst0Off + 0);
+        uint32_t m_cnt = Rd<uint32_t>(wbuf, inst0Off + 8);
+        uint8_t* mDataPtr = (m_cnt > 0 && (size_t)inst0Off + m_off + (size_t)m_cnt * 548 <= wbuf.size())
+                            ? (wbuf.data() + inst0Off + m_off) : nullptr;
+        ApplyConfigToTuningMem(wbuf.data() + inst0Off, mDataPtr, mDataPtr ? m_cnt : 0u, cfg);
+    }
+
+    static void PatchFtuneBuffer(std::vector<uint8_t>& fbuf, const NukeConfig& cfg) {
+        if (fbuf.size() < 44) return;
+        uint32_t fIoff = Rd<uint32_t>(fbuf, 12);
+        if ((size_t)fIoff + 16 > fbuf.size()) return;
+        uint32_t fOff0 = Rd<uint32_t>(fbuf, fIoff + 8);
+        uint32_t fSz0  = Rd<uint32_t>(fbuf, fIoff + 12);
+        if ((size_t)fOff0 + 32 <= fbuf.size() && fSz0 >= 32) {
+            ApplyConfigToForcePulseSettingsMem(fbuf.data() + fOff0, cfg);
+        }
+    }
+
+    static bool FindEmbeddedInSarc(const std::vector<SarcEntryBuild>& entries, uint32_t targetHash,
+                                   const char* extSuffix, std::vector<uint8_t>& out) {
+        if (targetHash) {
+            for (const auto& eb : entries) {
+                if (eb.pathHash == targetHash && !eb.embedded.empty()) { out = eb.embedded; return true; }
+            }
+        }
+        if (extSuffix) {
+            size_t slen = strlen(extSuffix);
+            for (const auto& eb : entries) {
+                if (!eb.embedded.empty() && eb.path.size() >= slen &&
+                    _stricmp(eb.path.c_str() + eb.path.size() - slen, extSuffix) == 0) {
+                    out = eb.embedded;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static bool BuildNukeEpeAndEe(void* vfs) {
+        std::vector<uint8_t> epe, epeAdf, rpgEe, wtune, ftune;
+        if (!ReadVfsWholeFile(vfs, "editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.ee", rpgEe)) {
+            DiagLog("[Nuke] Failed to read base wpn_061_rpg.ee");
+            return false;
+        }
+        std::vector<SarcEntryBuild> entries;
+        if (!ParseSarcEntries(rpgEe, entries)) {
+            DiagLog("[Nuke] Failed to parse wpn_061_rpg.ee SARC");
+            return false;
+        }
+
+        const char* baseEpePath    = "editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.epe";
+        const char* baseEpeAdfPath = "editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.epe_adf";
+        if (!ReadVfsWholeFile(vfs, baseEpePath, epe) &&
+            !FindEmbeddedInSarc(entries, JenkinsHash(baseEpePath, true), ".epe", epe)) {
+            DiagLog("[Nuke] Failed to read base wpn_061_rpg.epe");
+            return false;
+        }
+        if (!ReadVfsWholeFile(vfs, baseEpeAdfPath, epeAdf) &&
+            !FindEmbeddedInSarc(entries, JenkinsHash(baseEpeAdfPath, true), ".epe_adf", epeAdf)) {
+            DiagLog("[Nuke] Failed to read base wpn_061_rpg.epe_adf");
+            return false;
+        }
+
+        uint32_t epePrimaryWtuneHash = 0, epeFtuneHash = 0;
+        if (epe.size() >= 20) ScanEpeTuningHashes(epe, 8, epePrimaryWtuneHash, epeFtuneHash);
+        uint32_t baseWtuneHash = JenkinsHash(g_BaseWtunePath.c_str(), true);
+
+        // Prefer dropzone SARC-embedded primary wtunec (e.g. add/...wtunec), else weaponsc/loose VFS, else fallback
+        if (!FindEmbeddedInSarc(entries, epePrimaryWtuneHash ? epePrimaryWtuneHash : baseWtuneHash, nullptr, wtune) &&
+            !ReadVfsWholeFile(vfs, g_BaseWtunePath.c_str(), wtune) &&
+            !ReadVfsWholeFile(vfs, "editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.wtunec", wtune) &&
+            !FindEmbeddedInSarc(entries, 0, "_primary.wtunec", wtune) &&
+            !FindEmbeddedInSarc(entries, 0, ".wtunec", wtune)) {
+            DiagLog("[Nuke] Failed to read base wtunec");
+            return false;
+        }
+        if (!FindEmbeddedInSarc(entries, epeFtuneHash, nullptr, ftune) &&
+            !ReadVfsWholeFile(vfs, "editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.ftunec", ftune) &&
+            !ReadVfsWholeFile(vfs, "editor/entities/weapons/01_wielded/wpn_063_rpg/wpn_063_rpg.ftunec", ftune) &&
+            !FindEmbeddedInSarc(entries, 0, ".ftunec", ftune)) {
+            DiagLog("[Nuke] Failed to read base SForcePulseSettings ftunec");
+            return false;
+        }
+
+        // Capture base missile cruise/turning/gravity from wpn_061_rpg (preserve Nuke defaults for fireInterval/stage1/reload/mag/detonation)
+        if (wtune.size() >= 240) {
+            uint32_t ioff = Rd<uint32_t>(wtune, 12);
+            uint32_t inst0Off = Rd<uint32_t>(wtune, ioff + 8);
+            uint32_t inst0Sz  = Rd<uint32_t>(wtune, ioff + 12);
+            if ((size_t)inst0Off + 192 <= wtune.size() && inst0Sz >= 192) {
+                uint32_t m_off = Rd<uint32_t>(wtune, inst0Off + 0);
+                uint32_t m_cnt = Rd<uint32_t>(wtune, inst0Off + 8);
+                if (m_cnt > 0 && (size_t)inst0Off + m_off + 228 <= wtune.size()) {
+                    size_t mb = (size_t)inst0Off + m_off + 160;
+                    float a1 = Rd<float>(wtune, mb + 16);
+                    float ts = Rd<float>(wtune, mb + 28);
+                    float gv = Rd<float>(wtune, mb + 64);
+                    if (a1 > 1.0f && a1 < 2000.0f) { g_Cfg.missileSpeed1 = a1; g_Cfg.missileSpeed2 = a1; }
+                    if (ts >= 0.0f && ts <= 1000.0f) g_Cfg.turningSpeed = ts;
+                    g_Cfg.gravity = gv;
+                }
+            }
+        }
+        SyncExplosionFromVfxScale(g_Cfg);
+        g_DefaultCfg = g_Cfg;
+        g_BaseWtuneBuf = wtune;
+        g_BaseFtuneBuf = ftune;
+
+        const std::string nukeEpePath    = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.epe";
+        const std::string nukeEpeAdfPath = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.epe_adf";
+        const std::string nukeWtunePath  = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.wtunec";
+        const std::string nukeFtunePath  = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.ftunec";
+        const std::string nukeEePath     = "editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.ee";
+        const uint32_t    nukeFtuneHash  = JenkinsHash(nukeFtunePath.c_str(), true);
+        const uint32_t    nukeWtuneHash  = JenkinsHash(nukeWtunePath.c_str(), true);
+
+        PatchFtuneBuffer(ftune, g_Cfg);
+        PatchWtuneBuffer(wtune, g_Cfg);
+
+        while (epe.size() & 3) epe.push_back(0);
+        uint32_t nukeNameOff = (uint32_t)epe.size();
+        const char* nukeName = "wpn_nuke_launcher";
+        epe.insert(epe.end(), (const uint8_t*)nukeName, (const uint8_t*)nukeName + strlen(nukeName) + 1);
+        while (epe.size() & 3) epe.push_back(0);
+        PatchRtpcNode(epe, 8, nukeNameOff, nukeFtuneHash, epePrimaryWtuneHash, baseWtuneHash);
+
+        const uint32_t origEpeHash    = JenkinsHash(baseEpePath, true);
+        const uint32_t origEpeAdfHash = JenkinsHash(baseEpeAdfPath, true);
+        const uint32_t origWtuneHash  = JenkinsHash("editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.wtunec", true);
+        const uint32_t origFtuneHash  = JenkinsHash("editor/entities/weapons/01_wielded/wpn_061_rpg/wpn_061_rpg.ftunec", true);
+
+        bool hasWtuneInSarc = false, hasFtuneInSarc = false;
+        for (auto& eb : entries) {
+            if (eb.pathHash == origEpeHash) {
+                eb.path = nukeEpePath;
+                eb.pathHash = JenkinsHash(eb.path.c_str(), true);
+                eb.reportedSize = (uint32_t)epe.size();
+                eb.embedded.clear();
+            } else if (eb.pathHash == origEpeAdfHash) {
+                eb.path = nukeEpeAdfPath;
+                eb.pathHash = JenkinsHash(eb.path.c_str(), true);
+                eb.reportedSize = (uint32_t)epeAdf.size();
+                eb.embedded.clear();
+            } else if (eb.pathHash == origWtuneHash || eb.pathHash == baseWtuneHash ||
+                       (epePrimaryWtuneHash && eb.pathHash == epePrimaryWtuneHash)) {
+                if (!hasWtuneInSarc) {
+                    eb.path = nukeWtunePath;
+                    eb.pathHash = nukeWtuneHash;
+                    eb.reportedSize = (uint32_t)wtune.size();
+                    hasWtuneInSarc = true;
+                }
+                eb.embedded.clear();
+            } else if (eb.pathHash == origFtuneHash || (epeFtuneHash && eb.pathHash == epeFtuneHash)) {
+                if (!hasFtuneInSarc) {
+                    eb.path = nukeFtunePath;
+                    eb.pathHash = nukeFtuneHash;
+                    eb.reportedSize = (uint32_t)ftune.size();
+                    hasFtuneInSarc = true;
+                }
+                eb.embedded.clear();
+            }
+        }
+        if (!hasWtuneInSarc) {
+            SarcEntryBuild wb{ nukeWtunePath, nukeWtuneHash, 0xb7880f87u, (uint32_t)wtune.size(), {} };
+            entries.push_back(std::move(wb));
+        }
+        if (!hasFtuneInSarc) {
+            SarcEntryBuild fb{ nukeFtunePath, nukeFtuneHash, 0xb699dc3cu, (uint32_t)ftune.size(), {} };
+            entries.push_back(std::move(fb));
+        }
+
+        // Also include sphere-tank explosion_fuel_xl_postfx.effc (+ trims) from sphere tank .ee so VFX_dome_postfx_new loads locally,
+        // without overriding any loose dropzone overrides already present in VFS.
+        auto fnSz = (VfsFileSize_t)(g_ExeBase + g_Addr_F8B8B0);
+        std::vector<uint8_t> sphEe;
+        if (ReadVfsWholeFile(vfs, "editor/entities/vehicles/02_air/v200_helicopter_heavylift_military_chaos_sphere_tank/v200_helicopter_heavylift_military_chaos_sphere_tank.ee", sphEe)) {
+            std::vector<SarcEntryBuild> sphEntries;
+            if (ParseSarcEntries(sphEe, sphEntries)) {
+                auto hasHash = [&](uint32_t h) {
+                    for (const auto& e : entries) if (e.pathHash == h) return true;
+                    return false;
+                };
+                for (auto& se : sphEntries) {
+                    if (strncmp(se.path.c_str(), "effects/", 8) == 0 || strstr(se.path.c_str(), ".effc")) {
+                        if (!se.embedded.empty()) {
+                            uint64_t dummySz = 0;
+                            if (fnSz(vfs, se.path.c_str(), &dummySz) != 0) {
+                                std::vector<uint8_t> copy = se.embedded;
+                                AddVirtFile(se.path, std::move(copy));
+                            }
+                        }
+                        if (!hasHash(se.pathHash)) entries.push_back(std::move(se));
+                    }
+                }
+            }
+        }
+
+        std::vector<uint8_t> nukeEe = BuildSarcBlob(entries);
+        AddVirtFile(nukeEpePath, std::move(epe));
+        AddVirtFile(nukeEpeAdfPath, std::move(epeAdf));
+        AddVirtFile(nukeWtunePath, std::move(wtune));
+        AddVirtFile(nukeFtunePath, std::move(ftune));
+        AddVirtFile(nukeEePath, std::move(nukeEe));
+        DiagLog("[Nuke] Built virtual .ee/.epe/.epe_adf/.wtunec/.ftunec (SARC entries=%zu, wtuneH=0x%08x)",
+                entries.size(), epePrimaryWtuneHash ? epePrimaryWtuneHash : baseWtuneHash);
+        return true;
+    }
+
+    static bool PrependVirtualMount(void* vfs) {
+        struct SVfsMountsArray {
+            SVfsMount* begin;
+            SVfsMount* end;
+            SVfsMount* last;
+            void*      allocator;
+        };
+        auto* mounts = (SVfsMountsArray*)vfs;
+        size_t count = (size_t)(mounts->end - mounts->begin);
+        auto fnCap = (TArrayHelperSetCapacity_t)(g_ExeBase + g_Addr_F27DB0);
+        fnCap(mounts->allocator, mounts, sizeof(SVfsMount), 8, count + 1);
+        memmove(mounts->begin + 1, mounts->begin, count * sizeof(SVfsMount));
+        mounts->end = mounts->begin + count + 1;
+
+        uint32_t prio = 0;
+        if (count >= 2 && mounts->begin[1].m_Priority >= mounts->begin[count].m_Priority) {
+            prio = mounts->begin[1].m_Priority + 1;
+        } else if (count >= 1 && mounts->begin[1].m_Priority > 0) {
+            prio = mounts->begin[1].m_Priority - 1;
+        }
+        memset(&mounts->begin[0], 0, sizeof(SVfsMount));
+        mounts->begin[0].m_Provider = &g_VirtProvider;
+        mounts->begin[0].m_Instance = (void*)0x1;
+        mounts->begin[0].m_Priority = prio;
+        strncpy_s(mounts->begin[0].m_Name, sizeof(mounts->begin[0].m_Name), "nuke_vfs", _TRUNCATE);
+        DiagLog("[Nuke] Prepended virtual VFS mount (prev count=%zu, slot0 prio=%u)", count, prio);
+        return true;
+    }
+
+    typedef void(__fastcall* CSpawnSystem_Init_t)(void* thisptr);
+    typedef void(__fastcall* CWeaponManager_Update_t)(void* thisptr, float dt);
+    typedef void(__fastcall* CForcePulse_Explode_t)(uintptr_t thisForcePulse, uintptr_t weakDamager, float param2, bool param3);
+    typedef bool(__fastcall* CForcePulse_UpdatePreSim_t)(uintptr_t thisForcePulse, uintptr_t updateCtx);
+    typedef void(__fastcall* CForcePulse_UpdateExplosion_t)(uintptr_t thisForcePulse, float dt);
+    typedef void*(__fastcall* CreateCWeaponUIInfoRaw_t)(void* unused);
+    typedef void*(__fastcall* GetEffectResource_t)(void* outSp, void* resCache, uint32_t hash, const char* dbgName);
+    typedef void*(__fastcall* GetFMODEventResource_t)(void* soundSys, void* outSp, const uint32_t* guid16);
+    typedef void(__fastcall* PlayOneOffEffect_t)(void* pair32, const float* mat4, const float* zeroVec3, const void* effCull, void* modelArr, void* extraVec3);
+    typedef void(__fastcall* PlayOneOffSound_t)(void* pair32, const float* mat4, const float* zeroVec3, const void* effCull, float directPath, float obstruction, float reverbSend);
+
+    static CSpawnSystem_Init_t    o_SpawnSystem_Init     = nullptr;
+    static CWeaponManager_Update_t o_WeaponManager_Update = nullptr;
+    static CForcePulse_Explode_t      o_ForcePulse_Explode      = nullptr;
+    static CForcePulse_UpdatePreSim_t o_ForcePulse_UpdatePreSim = nullptr;
+    static CForcePulse_UpdateExplosion_t fn_ForcePulse_UpdateExpl = nullptr;
+    static PlayOneOffEffect_t      o_PlayOneOffEffect     = nullptr;
+    static PlayOneOffSound_t       o_PlayOneOffSound      = nullptr;
+    static GetLocalizedStringRaw_t o_GetLocalizedRaw      = nullptr;
+
+    static thread_local int s_NukeExplodeDepth = 0;
+
+    static bool g_Mounted = false;
+    static bool g_UIInfoPopulated = false;
+    static volatile bool g_QueueEquipNuke = false;
+    static int16_t g_DrawPendingWid = -1;
+    static uint32_t g_RuntimeNukeUiHash = 0;
+
+    static void QueueEquipNukeLauncher();
+
+    static void CopyMsvcStringPermanent(uint8_t* dst, const uint8_t* src) {
+        uint64_t len = *(const uint64_t*)(src + 16);
+        uint64_t cap = *(const uint64_t*)(src + 24);
+        if (len == 0) {
+            memset(dst, 0, 16);
+            *(uint64_t*)(dst + 16) = 0;
+            *(uint64_t*)(dst + 24) = 15;
+            return;
+        }
+        if (cap < 16) {
+            memcpy(dst, src, 32);
+        } else {
+            const char* heapSrc = *(const char* const*)src;
+            char* heapDst = new char[(size_t)len + 1];
+            memcpy(heapDst, heapSrc, (size_t)len);
+            heapDst[len] = '\0';
+            memset(dst, 0, 16);
+            *(char**)dst = heapDst;
+            *(uint64_t*)(dst + 16) = len;
+            *(uint64_t*)(dst + 24) = (len | 15ULL);
+        }
+    }
+
+    static void __fastcall NoopDestroy(void*) {}
+    struct StaticSpCountedBase {
+        void*    vtable;
+        int32_t  use_count;
+        int32_t  weak_count;
+    };
+    static void* g_NoopSpVtable[4] = { (void*)NoopDestroy, (void*)NoopDestroy, (void*)NoopDestroy, (void*)NoopDestroy };
+    static StaticSpCountedBase g_NukeUICountedBase = { g_NoopSpVtable, 1000000, 1000000 };
+
+    static void EnsureNukeWeaponUIInfo() {
+        if (g_UIInfoPopulated || !g_ExeBase) return;
+        struct SharedPtrSlot { uint8_t* px; void* pi; };
+        struct VecPtrs { SharedPtrSlot* begin; SharedPtrSlot* end; SharedPtrSlot* cap; };
+        auto* list = (VecPtrs*)(g_ExeBase + g_Addr_2CCB738);
+        if (!list->begin || list->end <= list->begin) return;
+        size_t cnt = (size_t)(list->end - list->begin);
+        if (cnt <= (size_t)g_NukeWeaponId || !list->begin[61].px) return;
+        if (list->begin[g_NukeWeaponId].px) { g_UIInfoPopulated = true; return; }
+
+        auto fnCreate = (CreateCWeaponUIInfoRaw_t)(g_ExeBase + g_Addr_825A60);
+        uint8_t* uiInfo = (uint8_t*)fnCreate(nullptr);
+        if (!uiInfo) return;
+
+        const uint8_t* srcData = list->begin[61].px + 0x1d0;
+        uint8_t* dstData = uiInfo + 0x1d0;
+        *(int32_t*)(dstData + 0)   = g_NukeWeaponId;
+        *(uint32_t*)(dstData + 4)  = g_RuntimeNukeUiHash;
+        *(uint32_t*)(dstData + 8)  = *(const uint32_t*)(srcData + 8);
+        *(uint32_t*)(dstData + 12) = kNukeWeaponHash;
+        *(uint8_t*)(dstData + 16)  = 1; // m_ShowInSupplyDrop = true
+        CopyMsvcStringPermanent(dstData + 24,  srcData + 24);
+        CopyMsvcStringPermanent(dstData + 56,  srcData + 56);
+        CopyMsvcStringPermanent(dstData + 88,  srcData + 88);
+        *(uint32_t*)(dstData + 120) = *(const uint32_t*)(srcData + 120);
+        *(uint32_t*)(dstData + 124) = *(const uint32_t*)(srcData + 124);
+        *(uint32_t*)(dstData + 128) = *(const uint32_t*)(srcData + 128);
+        CopyMsvcStringPermanent(dstData + 136, srcData + 136);
+        *(uint32_t*)(dstData + 168) = *(const uint32_t*)(srcData + 168);
+        *(uint32_t*)(dstData + 172) = *(const uint32_t*)(srcData + 172);
+        CopyMsvcStringPermanent(dstData + 176, srcData + 176);
+        *(uint32_t*)(dstData + 208) = *(const uint32_t*)(srcData + 208);
+        *(uint32_t*)(dstData + 212) = *(const uint32_t*)(srcData + 212);
+        *(uint32_t*)(dstData + 216) = *(const uint32_t*)(srcData + 216);
+        *(uint32_t*)(uiInfo + 0x2b0) = kNukeWeaponHash;
+
+        list->begin[g_NukeWeaponId].px = uiInfo;
+        list->begin[g_NukeWeaponId].pi = &g_NukeUICountedBase;
+        g_UIInfoPopulated = true;
+        DiagLog("[Nuke] Registered CWeaponUIInfo slot %d (list count=%zu)", (int)g_NukeWeaponId, cnt);
+    }
+
+    static const char* __fastcall hk_GetLocalizedStringRaw(uintptr_t locMgr, uint32_t hash) {
+        if (hash && hash == g_RuntimeNukeUiHash) return "NUKE LAUNCHER";
+        return o_GetLocalizedRaw ? o_GetLocalizedRaw(locMgr, hash) : nullptr;
+    }
+
+    static void EnsureNukeSupplyDropItem(uintptr_t wpnMgr) {
+        if (!g_ExeBase || !wpnMgr) return;
+        if (!*(uint8_t*)(wpnMgr + 40)) return; // CWeaponManager::m_HasInitializedSpawnTags
+
+        struct SharedPtrSlot { uint8_t* px; void* pi; };
+        struct VecPtrs { SharedPtrSlot* begin; SharedPtrSlot* end; SharedPtrSlot* cap; };
+        auto* list = (VecPtrs*)(g_ExeBase + g_Addr_2CCB738);
+        if (!list->begin || (size_t)(list->end - list->begin) <= (size_t)g_NukeWeaponId || !list->begin[g_NukeWeaponId].px) return;
+        const uint8_t* uiData = list->begin[g_NukeWeaponId].px + 0x1d0;
+
+        uintptr_t supplyMgr = *(uintptr_t*)(g_ExeBase + (g_IsSteam ? 0x2cb59d0u : 0x2cbbda0u));
+        if (!supplyMgr) return;
+        uintptr_t sBeg = *(uintptr_t*)(supplyMgr + 0x28);
+        uintptr_t sEnd = *(uintptr_t*)(supplyMgr + 0x30);
+        if (!sBeg || (sEnd - sBeg) < 100 * 8) return; // wait until main world supplies are loaded
+
+        for (uintptr_t p = sBeg; p < sEnd; p += 8) {
+            uint8_t* info = *(uint8_t**)p;
+            if (!info) continue;
+            uint8_t* existing = *(uint8_t**)(info + 0x10);
+            if (!existing) continue;
+            uint8_t* sdata = *(uint8_t**)(existing + 536);
+            if (sdata && *(uint32_t*)(sdata + 0) == kNukeWeaponHash) return;
+        }
+
+        uint8_t* item = new uint8_t[600]();
+        ((void*(__fastcall*)(void*))(g_ExeBase + (g_IsSteam ? 0xbc9d60u : 0xbd0c80u)))(item); // CSupplyDroppableItem::CSupplyDroppableItem
+
+        uint8_t* sdata = new uint8_t[112]();
+        *(uint32_t*)(sdata + 0) = kNukeWeaponHash;
+        *(uint32_t*)(sdata + 4) = g_RuntimeNukeUiHash;
+        *(uint32_t*)(sdata + 8) = *(const uint32_t*)(uiData + 8); // WEAPON_EXPLOSIVE category hash (0xffe277b4)
+        CopyMsvcStringPermanent(sdata + 16, uiData + 88);          // m_PreviewIcon
+        CopyMsvcStringPermanent(sdata + 48, uiData + 24);          // m_SmallIcon
+        CopyMsvcStringPermanent(sdata + 80, uiData + 56);          // m_MedIcon
+
+        *(uint8_t**)(item + 536) = sdata;
+        *(void**)(item + 544)    = &g_NukeUICountedBase;
+        *(uint8_t*)(item + 464)  = 1;     // m_Enabled = true
+        *(float*)(item + 552)    = -1.0f; // m_ProductionRate
+        *(int32_t*)(item + 556)  = 3;     // m_MaximumInventory
+        *(int32_t*)(item + 560)  = 0;     // m_Size = SMALL
+        *(int32_t*)(item + 564)  = 2;     // m_Type = WEAPON_EXPLOSIVE
+        *(int32_t*)(item + 568)  = 1;     // m_FallType = CRATE
+        *(int32_t*)(item + 572)  = 2104;  // m_UIOrder (right after AT3-X RPG)
+        *(uint8_t*)(item + 576)  = 0;     // m_HideWhenLocked = false
+        *(uint8_t*)(item + 577)  = 1;     // m_DontShowPopup = true
+        *(uint32_t*)(item + 592) = 0xdeadbeefu;
+        *(uint8_t*)(item + 596)  = 0;
+
+        struct WeakPair { void* px; void* pi; } wp = { item, &g_NukeUICountedBase };
+        void** smVt = nullptr;
+        int myId = -1;
+        if (FastRead<void**>(supplyMgr, smVt) && smVt && smVt[6]) {
+            myId = ((int(__thiscall*)(uintptr_t, WeakPair*))smVt[6])(supplyMgr, &wp); // CSupplyManager::AddObject (vtable +0x30)
+        }
+        if (myId >= 0) {
+            *(int32_t*)(item + 588) = myId;
+            ((void(__thiscall*)(uintptr_t, int, bool))(g_ExeBase + (g_IsSteam ? 0xbec8b0u : 0xbf3850u)))(supplyMgr, myId, false); // unlocked
+            sBeg = *(uintptr_t*)(supplyMgr + 0x28);
+            sEnd = *(uintptr_t*)(supplyMgr + 0x30);
+            if (sBeg && (size_t)myId < (sEnd - sBeg) / 8) {
+                uint8_t* info = *(uint8_t**)(sBeg + (size_t)myId * 8);
+                if (info) {
+                    *(int32_t*)(info + 32) = 3; // m_InventoryCount
+                    *(uint8_t*)(info + 40) = 0; // m_IsLocked = false
+                    *(uint8_t*)(info + 41) = 1; // m_IsViewed = true
+                }
+            }
+            DiagLog("[Nuke] Registered Nuke Launcher in Supply Drop (myId=%d)", myId);
+        }
+    }
+
+    static void SyncVirtualTuningFiles() {
+        if (!g_BaseWtuneBuf.empty()) {
+            std::vector<uint8_t> w = g_BaseWtuneBuf;
+            PatchWtuneBuffer(w, g_Cfg);
+            AddVirtFile("editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.wtunec", std::move(w));
+        }
+        if (!g_BaseFtuneBuf.empty()) {
+            std::vector<uint8_t> f = g_BaseFtuneBuf;
+            PatchFtuneBuffer(f, g_Cfg);
+            AddVirtFile("editor/entities/weapons/01_wielded/wpn_nuke_launcher/wpn_nuke_launcher.ftunec", std::move(f));
+        }
+    }
+
+    static void ApplyLiveNukeTuning(uintptr_t charPtr) {
+        if (!g_ExeBase || !charPtr) return;
+        typedef uintptr_t*(__thiscall* GetWpnInInv_t)(uintptr_t ch, int slot);
+        typedef bool(__thiscall* CanReload_t)(uintptr_t);
+        auto fnGetWpn = (GetWpnInInv_t)(g_ExeBase + g_Addr_550930);
+        bool didRefill = false;
+
+        for (int slot = 0; slot < 4; ++slot) {
+            uintptr_t* sp = fnGetWpn(charPtr, slot);
+            uintptr_t wpn = sp ? sp[0] : 0;
+            if (!wpn) continue;
+            uint32_t nameHash = 0;
+            int16_t wid = 0;
+            FastRead<uint32_t>(wpn + 456, nameHash); // CWeapon + 0x10 (CGameObject) + 440 (m_NameHash)
+            FastRead<int16_t>(wpn + 1258, wid);
+            if (nameHash != kNukeWeaponHash && wid != g_NukeWeaponId) continue;
+
+            uintptr_t fmBeg = 0, fmEnd = 0;
+            if (!FastRead<uintptr_t>(wpn + 1592, fmBeg) || !FastRead<uintptr_t>(wpn + 1600, fmEnd) || !fmBeg || fmEnd <= fmBeg) continue;
+            size_t count = (size_t)(fmEnd - fmBeg) / sizeof(uintptr_t);
+            if (count > 16) continue;
+
+            for (size_t i = 0; i < count; ++i) {
+                uintptr_t fm = 0;
+                if (!FastRead<uintptr_t>(fmBeg + i * sizeof(uintptr_t), fm) || !fm) continue;
+                int32_t mode = -1;
+                if (!FastRead<int32_t>(fm + 612, mode) || mode != 0) continue; // primary_module only
+
+                uintptr_t tun = 0;
+                if (!FastRead<uintptr_t>(fm + 1368, tun) || !tun) continue;
+                uintptr_t mData = 0;
+                uint32_t mCnt = 0;
+                FastRead<uintptr_t>(tun + 0, mData);
+                FastRead<uint32_t>(tun + 8, mCnt);
+                if (mCnt > 8) mCnt = 0;
+
+                ApplyConfigToTuningMem((uint8_t*)tun, (uint8_t*)mData, mCnt, g_Cfg);
+
+                float delayTimer = 0.0f;
+                if (FastRead<float>(fm + 1332, delayTimer) && delayTimer > g_Cfg.fireInterval) {
+                    FastWrite<float>(fm + 1332, std::max(0.0f, g_Cfg.fireInterval));
+                }
+                int32_t magAmmo = 0;
+                int32_t magSize = std::max(1, g_Cfg.magazineSize);
+                if (!g_InfWeaponAmmo && FastRead<int32_t>(fm + 1388, magAmmo)) {
+                    if (magAmmo > magSize) {
+                        FastWrite<int32_t>(fm + 1388, magSize);
+                    } else if (g_RefillMagPending && magAmmo < magSize) {
+                        FastWrite<int32_t>(fm + 1388, magSize);
+                        didRefill = true;
+                    }
+                }
+
+                // Rico's animation graph ignores UB_ACT_RELOAD for custom weapon IDs (64+);
+                // alias m_WeaponId to base RPG ID (61) only while wielded & reloadable.
+                int32_t state = 0;
+                FastRead<int32_t>(wpn + 1268, state);
+                void** vt = nullptr;
+                bool canRel = (state == 1 && FastRead<void**>(fm, vt) && vt && vt[0x220 / 8])
+                              ? ((CanReload_t)vt[0x220 / 8])(fm) : false;
+                int16_t wantWid = canRel ? (int16_t)61 : g_NukeWeaponId;
+                if (wid != wantWid) {
+                    FastWrite<int16_t>(wpn + 1258, wantWid);
+                    wid = wantWid;
+                }
+            }
+        }
+        if (didRefill || g_RefillMagPending) g_RefillMagPending = false;
+    }
+
+    static void EnforceInfWeaponAmmo(uintptr_t charPtr) {
+        if (!g_ExeBase || !charPtr) return;
+        typedef uintptr_t*(__thiscall* GetWpnInInv_t)(uintptr_t ch, int slot);
+        typedef bool(__thiscall* BoolFm_t)(uintptr_t);
+        auto fnGetWpn = (GetWpnInInv_t)(g_ExeBase + g_Addr_550930);
+        uintptr_t wingsuitWpn = GetWingsuitWeaponPtr();
+
+        uintptr_t inv = charPtr + 0x970;
+        uintptr_t invChar = 0;
+        bool invValid = FastRead<uintptr_t>(inv + 2040, invChar) && (invChar == charPtr);
+
+        for (int slot = 0; slot < 4; ++slot) {
+            uintptr_t* sp = fnGetWpn(charPtr, slot);
+            uintptr_t wpn = sp ? sp[0] : 0;
+            if (!wpn || (wingsuitWpn && wpn == wingsuitWpn)) continue;
+
+            uintptr_t fmBeg = 0, fmEnd = 0;
+            if (!FastRead<uintptr_t>(wpn + 1592, fmBeg) || !FastRead<uintptr_t>(wpn + 1600, fmEnd) || !fmBeg || fmEnd <= fmBeg) continue;
+            size_t count = (size_t)(fmEnd - fmBeg) / sizeof(uintptr_t);
+            if (count > 16) continue;
+
+            for (size_t i = 0; i < count; ++i) {
+                uintptr_t fm = 0;
+                if (!FastRead<uintptr_t>(fmBeg + i * sizeof(uintptr_t), fm) || !fm) continue;
+                if (IsWingsuitFiringModule(fm)) continue;
+
+                uintptr_t tun = 0;
+                int32_t ammoType = -1;
+                int32_t magAmmo = 0;
+                if (!FastRead<uintptr_t>(fm + 1368, tun) || !tun) continue;
+                if (!FastRead<int32_t>(fm + 1380, ammoType) || ammoType == 13) continue; // 13 == AMMO_UNLIMITED
+
+                if (invValid && ammoType >= 0 && ammoType < 45) {
+                    int32_t curInv = 0, maxInv = 0;
+                    if (FastRead<int32_t>(inv + 568 + (size_t)ammoType * 4, curInv) &&
+                        FastRead<int32_t>(inv + 748 + (size_t)ammoType * 4, maxInv) &&
+                        maxInv > 0 && curInv < maxInv) {
+                        FastWrite<int32_t>(inv + 568 + (size_t)ammoType * 4, maxInv);
+                    }
+                }
+
+                int32_t magSize = 0;
+                FastRead<int32_t>(tun + 112, magSize);
+                if (magSize > 0 && FastRead<int32_t>(fm + 1388, magAmmo) && magAmmo < 999) {
+                    void** vt = nullptr;
+                    if (FastRead<void**>(fm, vt) && vt) {
+                        if (magAmmo == 0 && vt[0x220 / 8] && vt[0x228 / 8] &&
+                            ((BoolFm_t)vt[0x220 / 8])(fm)) {
+                            ((BoolFm_t)vt[0x228 / 8])(fm);
+                            FastRead<int32_t>(fm + 1388, magAmmo);
+                        }
+                        if (magAmmo < 999 && vt[0x210 / 8]) {
+                            ((SetMagazineAmmo_t)vt[0x210 / 8])(fm, 999);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    static void ProcessMainThread();
+
+    static void __fastcall hk_CWeaponManager_Update(void* thisptr, float dt) {
+        EnsureNukeWeaponUIInfo();
+        if (o_WeaponManager_Update) o_WeaponManager_Update(thisptr, dt);
+        EnsureNukeWeaponUIInfo();
+        EnsureNukeSupplyDropItem((uintptr_t)thisptr);
+        ProcessMainThread();
+    }
+
+    static void ReleaseBoostSharedPtr(void* spPair[2]) {
+        uint8_t* pi = (uint8_t*)spPair[1];
+        if (!pi) { spPair[0] = nullptr; return; }
+        long prev = InterlockedExchangeAdd((volatile long*)(pi + 8), -1);
+        if (prev == 1) {
+            void** vt = *(void***)pi;
+            ((void(__fastcall*)(void*))vt[1])(pi);
+            long wprev = InterlockedExchangeAdd((volatile long*)(pi + 12), -1);
+            if (wprev == 1) ((void(__fastcall*)(void*))vt[2])(pi);
+        }
+        spPair[0] = nullptr;
+        spPair[1] = nullptr;
+    }
+
+    static void SaveOrigAndScale(std::vector<std::pair<uintptr_t, float>>& cache, float* pVal, float scale) {
+        if (!pVal) return;
+        uintptr_t key = (uintptr_t)pVal;
+        float orig = *pVal;
+        bool found = false;
+        for (auto& kv : cache) {
+            if (kv.first == key) { orig = kv.second; found = true; break; }
+        }
+        if (!found) cache.push_back({ key, orig });
+        *pVal = orig * scale;
+    }
+
+    static void ScaleVfxEmitterRec(std::vector<std::pair<uintptr_t, float>>& cache, uint8_t* em, float scale, int depth) {
+        if (!em || depth > 4) return;
+        SaveOrigAndScale(cache, (float*)(em + 164), scale); // SVFXEmitterData::m_SizeScale
+        uint8_t* trailPtr = *(uint8_t**)(em + 512);         // SVFXTrail::m_Emitters.m_Data (16B SAdfDeferredPtr)
+        uint32_t trailCnt = *(uint32_t*)(em + 520);         // SVFXTrail::m_Emitters.m_Count
+        if (trailPtr && trailCnt > 0 && trailCnt <= 32) {
+            for (uint32_t ti = 0; ti < trailCnt; ++ti) {
+                uint8_t* subEm = *(uint8_t**)(trailPtr + (size_t)ti * 16);
+                ScaleVfxEmitterRec(cache, subEm, scale, depth + 1);
+            }
+        }
+    }
+
+    static std::vector<void*>& GetScaledVfxWrappers() {
+        static std::vector<void*> s_wrappers;
+        return s_wrappers;
+    }
+
+    static void ScaleVfxResource(void* pair32, float scale) {
+        if (!pair32) return;
+        uint8_t* wrapper = *(uint8_t**)pair32; // SEffectResourceDataWrapper*
+        if (!wrapper) return;
+        auto& wrappers = GetScaledVfxWrappers();
+        auto it = std::find(wrappers.begin(), wrappers.end(), (void*)wrapper);
+        if (scale != 1.0f) {
+            if (it == wrappers.end()) wrappers.push_back((void*)wrapper);
+        } else if (it != wrappers.end()) {
+            wrappers.erase(it);
+        }
+        static std::vector<std::pair<uintptr_t, float>> s_origFloats;
+        SaveOrigAndScale(s_origFloats, (float*)(wrapper + 32), scale); // m_CullRadius
+        SaveOrigAndScale(s_origFloats, (float*)(wrapper + 36), scale); // m_CullDistance
+        uint8_t* pVfx = *(uint8_t**)(wrapper + 24);  // SVFXResourceRoot*
+        if (pVfx) {
+            SaveOrigAndScale(s_origFloats, (float*)(pVfx + 4), scale); // m_CullRadius
+            SaveOrigAndScale(s_origFloats, (float*)(pVfx + 8), scale); // m_CullDistance
+            uint8_t* emData = *(uint8_t**)(pVfx + 16);
+            uint32_t emCnt  = *(uint32_t*)(pVfx + 24);
+            if (emData && emCnt > 0 && emCnt <= 128) {
+                for (uint32_t i = 0; i < emCnt; ++i) {
+                    ScaleVfxEmitterRec(s_origFloats, emData + (size_t)i * 0x230, scale, 0);
+                }
+            }
+        }
+    }
+
+    static void MakeScaledMatrix(const float* src, float* dst, float s) {
+        memcpy(dst, src, 64);
+        if (s != 1.0f) {
+            dst[0] *= s; dst[1] *= s; dst[2]  *= s;
+            dst[4] *= s; dst[5] *= s; dst[6]  *= s;
+            dst[8] *= s; dst[9] *= s; dst[10] *= s;
+        }
+    }
+
+    static void __fastcall hk_PlayOneOffEffect(void* pair32, const float* mat4, const float* zeroVec3, const void* effCull, void* modelArr, void* extraVec3) {
+        if (s_NukeExplodeDepth > 0) {
+            if (!g_Cfg.enableMainVfx) return;
+            float sc = std::max(0.05f, g_Cfg.vfxScale);
+            ScaleVfxResource(pair32, sc);
+            if (mat4 && sc != 1.0f) {
+                float scaledMat[16];
+                MakeScaledMatrix(mat4, scaledMat, sc);
+                if (o_PlayOneOffEffect) o_PlayOneOffEffect(pair32, scaledMat, zeroVec3, effCull, modelArr, extraVec3);
+                return;
+            }
+        } else if (pair32) {
+            void* wrapper = *(void**)pair32;
+            auto& wrappers = GetScaledVfxWrappers();
+            if (wrapper && std::find(wrappers.begin(), wrappers.end(), wrapper) != wrappers.end()) {
+                ScaleVfxResource(pair32, 1.0f);
+            }
+        }
+        if (o_PlayOneOffEffect) o_PlayOneOffEffect(pair32, mat4, zeroVec3, effCull, modelArr, extraVec3);
+    }
+
+    static bool __fastcall hk_CForcePulse_UpdatePreSim(uintptr_t thisFP, uintptr_t ctx) {
+        uint32_t fromWeapon = 0;
+        FastRead<uint32_t>(thisFP + 716, fromWeapon);
+        if (fromWeapon == kNukeWeaponHash && *(uint8_t*)(thisFP + 0x224) && fn_ForcePulse_UpdateExpl) {
+            uintptr_t tun = *(uintptr_t*)(thisFP + 0x3a0);
+            float dmgR = 0.0f;
+            if (tun) {
+                dmgR = *(uint8_t*)(thisFP + 0x225) ? *(float*)(tun + 0x4) : *(float*)(tun + 0x14);
+            }
+            float effR = std::max(dmgR, *(float*)(thisFP + 0x218));
+            float lastR = *(float*)(thisFP + 0x220);
+            if (effR > 50.0f && lastR < effR) {
+                float dt = *(float*)(ctx + 0x20);
+                fn_ForcePulse_UpdateExpl(thisFP, dt);
+                if (*(float*)(thisFP + 0x220) < effR || *(int32_t*)(thisFP + 0x234) != 0) {
+                    return true;
+                }
+            }
+        }
+        return o_ForcePulse_UpdatePreSim ? o_ForcePulse_UpdatePreSim(thisFP, ctx) : false;
+    }
+
+    static void __fastcall hk_PlayOneOffSound(void* pair32, const float* mat4, const float* zeroVec3, const void* effCull, float directPath, float obstruction, float reverbSend) {
+        if (s_NukeExplodeDepth > 0 && !g_Cfg.enableSound) return;
+        if (o_PlayOneOffSound) o_PlayOneOffSound(pair32, mat4, zeroVec3, effCull, directPath, obstruction, reverbSend);
+    }
+
+    static void __fastcall hk_CForcePulse_Explode(uintptr_t thisFP, uintptr_t weakDamager, float param2, bool param3) {
+        uint32_t fromWeapon = 0;
+        FastRead<uint32_t>(thisFP + 716, fromWeapon);
+        bool isNuke = (fromWeapon == kNukeWeaponHash);
+
+        void* savedInAirSnd[2] = { nullptr, nullptr };
+        if (isNuke) {
+            SyncExplosionFromVfxScale(g_Cfg);
+            FastWrite<float>(thisFP + 528, std::max(1.0f, g_Cfg.explosionSpeed));
+            FastWrite<float>(thisFP + 532, std::max(0.0f, g_Cfg.explosionPressure));
+            FastWrite<float>(thisFP + 536, std::max(0.5f, g_Cfg.forceRadius));
+            FastWrite<float>(thisFP + 540, std::max(0.0f, g_Cfg.despawnRadius));
+            FastWrite<uint8_t>(thisFP + 551, g_Cfg.fireDamage ? 1 : 0);
+            FastWrite<uint8_t>(thisFP + 556, g_Cfg.forceKill ? 1 : 0);
+            FastWrite<float>(thisFP + 580, std::max(0.0f, g_Cfg.damageScale));
+            uintptr_t fpTuning = 0;
+            if (FastRead<uintptr_t>(thisFP + 928, fpTuning) && fpTuning) {
+                ApplyConfigToForcePulseSettingsMem((uint8_t*)fpTuning, g_Cfg);
+            }
+            if (!g_Cfg.enableSound && !o_PlayOneOffSound) {
+                savedInAirSnd[0] = *(void**)(thisFP + 976);
+                savedInAirSnd[1] = *(void**)(thisFP + 984);
+                *(void**)(thisFP + 976) = nullptr;
+                *(void**)(thisFP + 984) = nullptr;
+            }
+            ++s_NukeExplodeDepth;
+        }
+
+        uintptr_t spawnSys = *(uintptr_t*)(g_ExeBase + g_Addr_2CB1D20);
+        void* resCache = nullptr;
+        if (spawnSys) FastRead<void*>(spawnSys + 0x130, resCache);
+
+        if (o_ForcePulse_Explode) o_ForcePulse_Explode(thisFP, weakDamager, param2, param3);
+
+        if (isNuke) {
+            --s_NukeExplodeDepth;
+            if (!g_Cfg.enableSound && !o_PlayOneOffSound && (savedInAirSnd[0] || savedInAirSnd[1])) {
+                *(void**)(thisFP + 976) = savedInAirSnd[0];
+                *(void**)(thisFP + 984) = savedInAirSnd[1];
+            }
+            if (g_Cfg.enableDomePostFx && resCache) {
+                auto fnGetEff = (GetEffectResource_t)(g_ExeBase + g_Addr_27C250);
+                void* spPost[2] = { nullptr, nullptr };
+                fnGetEff(spPost, resCache, kSphereTankVfxPostHash, nullptr);
+
+                if (spPost[0]) {
+                    static DWORD s_lastPostTick = 0;
+                    DWORD nowTick = GetTickCount();
+                    if (nowTick - s_lastPostTick > 100) {
+                        s_lastPostTick = nowTick;
+                        struct { void* eff[2]; void* snd[2]; } pair = { { spPost[0], spPost[1] }, { nullptr, nullptr } };
+                        float zero3[3] = { 0.0f, 0.0f, 0.0f };
+                        uint8_t alwaysPlay[4] = { 1, 1, 1, 1 };
+                        float postMat[16];
+                        float postScale = std::max(0.05f, g_Cfg.vfxScale);
+                        MakeScaledMatrix((const float*)(thisFP + 0x104), postMat, postScale);
+                        ScaleVfxResource(&pair, postScale);
+                        if (o_PlayOneOffEffect) {
+                            o_PlayOneOffEffect(&pair, postMat, zero3, alwaysPlay, nullptr, nullptr);
+                        } else {
+                            ((PlayOneOffEffect_t)(g_ExeBase + g_Addr_286040))(&pair, postMat, zero3, alwaysPlay, nullptr, nullptr);
+                        }
+                    }
+                }
+                ReleaseBoostSharedPtr(spPost);
+            }
+        }
+    }
+
+    static void __fastcall hk_CSpawnSystem_Init(void* thisptr) {
+        if (!g_Mounted && g_ExeBase) {
+            void* vfs = *(void**)(g_ExeBase + g_Addr_2C84458);
+            DiagLog("[Nuke] hk_CSpawnSystem_Init fired (vfs=%p)", vfs);
+            if (vfs) {
+                bool ok1 = BuildSpawnExpentityDefs(vfs);
+                bool ok2 = BuildExpentityInfoCollection(vfs);
+                bool ok3 = BuildWeaponsWeaponsc(vfs);
+                bool ok4 = BuildNukeEpeAndEe(vfs);
+                if (ok1 && ok2 && ok3 && ok4) {
+                    PrependVirtualMount(vfs);
+                    g_Mounted = true;
+                }
+            }
+        }
+        if (o_SpawnSystem_Init) o_SpawnSystem_Init(thisptr);
+    }
+
+    static void QueueEquipNukeLauncher() {
+        g_QueueEquipNuke = true;
+    }
+
+    static void ProcessMainThread() {
+        if (!g_ExeBase) return;
+        if (g_SyncVfsPending) {
+            g_SyncVfsPending = false;
+            SyncVirtualTuningFiles();
+        }
+        uintptr_t spawnSys = *(uintptr_t*)(g_ExeBase + g_Addr_2CB1D20);
+        uintptr_t player = GetPlayerPtr();
+        uintptr_t charPtr = 0;
+        bool hasPlayer = spawnSys && player && FastRead<uintptr_t>(player + 0x68, charPtr) && charPtr;
+
+        if (hasPlayer) {
+            if (g_InfWeaponAmmo) EnforceInfWeaponAmmo(charPtr);
+            ApplyLiveNukeTuning(charPtr);
+        }
+
+        if (g_QueueEquipNuke) {
+            g_QueueEquipNuke = false;
+            if (!hasPlayer) {
+                DiagLog("[Nuke] Equip aborted: spawnSys=%p player=%p charPtr=%p", (void*)spawnSys, (void*)player, (void*)charPtr);
+                return;
+            }
+            EnsureNukeWeaponUIInfo();
+            float mat[16] = { 0 };
+            for (int i = 0; i < 16; ++i) FastRead<float>(charPtr + 0x114 + (uintptr_t)(i * 4), mat[i]);
+            mat[13] += 1.0f;
+
+            auto fnSpawn = (Spawn_t)(g_ExeBase + g_Addr_BADC60);
+            void* pWeaponSpawnCb = (void*)(g_ExeBase + g_Addr_B478E0);
+            fnSpawn(spawnSys, "wpn_nuke_launcher", mat, 0x593C, pWeaponSpawnCb, (void*)player, nullptr, 0, -1);
+            g_DrawPendingWid = g_NukeWeaponId;
+            DiagLog("[Nuke] Requested CSpawnSystem::Spawn('wpn_nuke_launcher') with WeaponSpawnCallback");
+        }
+
+        if (g_DrawPendingWid >= 0 && hasPlayer) {
+            typedef uintptr_t*(__thiscall* GetWpnInInv_t)(uintptr_t ch, int slot);
+            auto fnGetWpn = (GetWpnInInv_t)(g_ExeBase + g_Addr_550930);
+            uintptr_t* sp = fnGetWpn(charPtr, 0);
+            uintptr_t wpn = sp ? sp[0] : 0;
+            int16_t wid = 0;
+            if (wpn && FastRead<int16_t>(wpn + 1258, wid) && wid == g_DrawPendingWid) {
+                typedef void(__thiscall* SelectWeapon_t)(uintptr_t ch, int slot);
+                typedef void(__thiscall* DrawWeapon_t)(uintptr_t ch, bool b);
+                ((SelectWeapon_t)(g_ExeBase + g_Addr_571AC0))(charPtr, 0);
+                ((DrawWeapon_t)(g_ExeBase + g_Addr_52CF20))(charPtr, false);
+                DiagLog("[Nuke] Drew newly spawned wid=%d into Rico's hands (wpn=%p)", (int)wid, (void*)wpn);
+                g_DrawPendingWid = -1;
+            }
+        }
+    }
+
+    static void InstallEarlyHooks() {
+        g_RuntimeNukeUiHash = JenkinsHash("MOD_WPN_NUKE_LAUNCHER", false);
+        HMODULE hExe = GetModuleHandleA("JustCause4.exe");
+        if (!hExe) hExe = GetModuleHandleA("JustCause4GameCL.exe");
+        if (!hExe) hExe = GetModuleHandleA(nullptr);
+        g_ExeBase = (uintptr_t)hExe;
+        if (!g_ExeBase) return;
+        InitializePlatformAddresses();
+
+        MH_STATUS s = MH_Initialize();
+        if (s != MH_OK && s != MH_ERROR_ALREADY_INITIALIZED) return;
+
+        auto hookAt = [](uintptr_t rva, void* detour, void** orig, const char* name) {
+            void* target = (void*)(g_ExeBase + rva);
+            if (MH_CreateHook(target, detour, orig) == MH_OK && MH_EnableHook(target) == MH_OK) {
+                DiagLog("[Nuke] Hooked %s (0x%llx)", name, (unsigned long long)rva);
+            } else {
+                DiagLog("[Nuke] FAILED hook %s (0x%llx)", name, (unsigned long long)rva);
+            }
+        };
+        hookAt(g_Addr_B8F4E0, (void*)&hk_CSpawnSystem_Init,    (void**)&o_SpawnSystem_Init,     "CSpawnSystem::Init");
+        hookAt(g_Addr_7B6D10, (void*)&hk_CWeaponManager_Update,(void**)&o_WeaponManager_Update, "CWeaponManager::Update");
+        hookAt(g_Addr_A8D8D0, (void*)&hk_CForcePulse_Explode,  (void**)&o_ForcePulse_Explode,   "CForcePulse::Explode");
+        uintptr_t updPreAddr = g_ExeBase + (g_IsSteam ? 0xABD680u : 0xAC4BE0u);
+        static const uint8_t kUpdPreSig[] = { 0x40,0x57,0x48,0x83,0xEC,0x30,0x48,0xC7,0x44,0x24,0x20,0xFE,0xFF,0xFF,0xFF };
+        uint8_t probe[15] = {};
+        if (!FastRead<uint8_t>(updPreAddr, probe[0]) || memcmp((void*)updPreAddr, kUpdPreSig, sizeof(kUpdPreSig)) != 0) {
+            updPreAddr = g_IsSteam ? PatternScan(g_ExeBase, "40 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 40 48 89 74 24 48 48 8B D9 80 B9 24 02 00 00 00") : 0;
+        }
+        if (updPreAddr) {
+            int32_t rel = *(int32_t*)(updPreAddr + 0x2F);
+            fn_ForcePulse_UpdateExpl = (CForcePulse_UpdateExplosion_t)(updPreAddr + 0x2E + 5 + rel);
+            if (MH_CreateHook((void*)updPreAddr, (void*)&hk_CForcePulse_UpdatePreSim, (void**)&o_ForcePulse_UpdatePreSim) == MH_OK &&
+                MH_EnableHook((void*)updPreAddr) == MH_OK) {
+                DiagLog("[Nuke] Hooked CForcePulse::UpdatePreSim (0x%llx, updExpl=0x%llx)",
+                        (unsigned long long)(updPreAddr - g_ExeBase), (unsigned long long)((uintptr_t)fn_ForcePulse_UpdateExpl - g_ExeBase));
+            }
+        }
+        hookAt(g_Addr_286040, (void*)&hk_PlayOneOffEffect,     (void**)&o_PlayOneOffEffect,     "PlayOneOffEffect");
+        hookAt(g_Addr_2862F0, (void*)&hk_PlayOneOffSound,      (void**)&o_PlayOneOffSound,      "PlayOneOffSound");
+        hookAt(g_Addr_88850,  (void*)&hk_GetLocalizedStringRaw,(void**)&o_GetLocalizedRaw,      "GetLocalizedStringRaw");
+    }
+}
 
 struct MissionCmd {
     volatile int mode; // 0 = Idle, 1 = Activate, 2 = Complete, 3 = Inactive
@@ -13831,6 +15645,51 @@ else if (g_CurrentTab == 10) {
             }
             ImGui::Spacing();
 
+            if (ImGui::Button("Equip Nuke Launcher")) {
+                NukeWeapon::QueueEquipNukeLauncher();
+            }
+            ImGui::SameLine();
+            static bool s_ShowNukeConfig = false;
+            if (ImGui::Button(s_ShowNukeConfig ? "Hide Settings##Nuke" : "Customize##Nuke")) {
+                s_ShowNukeConfig = !s_ShowNukeConfig;
+            }
+            if (s_ShowNukeConfig) {
+                ImGui::Indent(20.0f * g_UIScale);
+                auto& nc = NukeWeapon::g_Cfg;
+                bool vfsChanged = false;
+                if (ImGui::TreeNodeEx("Explosion Effects##Nuke", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::SetNextItemWidth(160.0f * g_UIScale);
+                    if (ImGui::SliderFloat("Explosion Size##Nuke", &nc.vfxScale, 0.2f, 10.0f, "%.2fx")) {
+                        NukeWeapon::SyncExplosionFromVfxScale(nc);
+                        vfsChanged = true;
+                    }
+                    if (ImGui::SmallButton("Reset Explosion##Nuke")) {
+                        NukeWeapon::ResetExplosionDefaults();
+                    }
+                    ImGui::TreePop();
+                }
+                if (ImGui::TreeNodeEx("Missile & Weapon (Real-Time)##Nuke", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    vfsChanged |= ImGui::Checkbox("Full Auto##Nuke", &nc.fullAuto);
+                    ImGui::SameLine();
+                    vfsChanged |= ImGui::Checkbox("Unlimited Ammo##Nuke", &nc.unlimitedAmmo);
+                    ImGui::SetNextItemWidth(160.0f * g_UIScale);
+                    float missileSpeed = nc.missileSpeed2;
+                    if (ImGui::SliderFloat("Missile Speed##Nuke", &missileSpeed, 5.0f, 500.0f, "%.1f m/s")) {
+                        nc.missileSpeed1 = missileSpeed;
+                        nc.missileSpeed2 = missileSpeed;
+                        vfsChanged = true;
+                    }
+                    if (ImGui::SmallButton("Reset Weapon/Missile##Nuke")) {
+                        NukeWeapon::ResetWeaponDefaults();
+                        NukeWeapon::g_RefillMagPending = true;
+                    }
+                    ImGui::TreePop();
+                }
+                if (vfsChanged) NukeWeapon::g_SyncVfsPending = true;
+                ImGui::Unindent(20.0f * g_UIScale);
+            }
+            ImGui::Spacing();
+
             if (ImGui::Checkbox("Never Wanted", &g_NeverWanted)) {}
 ImGui::Spacing();
 
@@ -15151,8 +17010,7 @@ void SafeInitImGui(HWND hwnd, ID3D11Device* dev, ID3D11DeviceContext* ctx) {
     }
 }
 
-// Loading Screen Dismissal Trackers
-static volatile bool g_LoadingScreenLifted = false;
+// Loading Screen Dismissal Trackers (g_LoadingScreenLifted declared globally above)
 
 typedef void(__thiscall* CLoadUI_OnHide_t)(uintptr_t);
 static CLoadUI_OnHide_t o_CLoadUI_OnHide = nullptr;
@@ -15298,14 +17156,16 @@ HRESULT __stdcall hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
         ID3D11Device* pNewDev = nullptr;
         if (FAILED(pSwapChain->GetDevice(__uuidof(ID3D11Device), (void**)&pNewDev)) || !pNewDev) {
             g_LastSwapChain = nullptr;
-            return oPresent(pSwapChain, SyncInterval, Flags);
+
+    return oPresent(pSwapChain, SyncInterval, Flags);
         }
         ID3D11DeviceContext* pNewCtx = nullptr;
         pNewDev->GetImmediateContext(&pNewCtx);
         if (!pNewCtx) {
             pNewDev->Release();
             g_LastSwapChain = nullptr;
-            return oPresent(pSwapChain, SyncInterval, Flags);
+
+    return oPresent(pSwapChain, SyncInterval, Flags);
         }
         if (g_mainRenderTargetView) {
             g_mainRenderTargetView->Release();
@@ -16082,7 +17942,8 @@ HRESULT __stdcall hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
             g_FrozenTexture->Release();
             g_FrozenTexture = nullptr;
         }
-        return oPresent(pSwapChain, SyncInterval, Flags);
+
+    return oPresent(pSwapChain, SyncInterval, Flags);
     }
 
     
@@ -16632,6 +18493,7 @@ DWORD WINAPI MainThread(LPVOID lpParam) {
     SetConsoleCtrlHandler([](DWORD) -> BOOL { TerminateProcess(GetCurrentProcess(), 0); return TRUE; }, TRUE);
     JC4Terrain16x16::InitTerrain16x16Hooks();
     SetupConsole();
+    NukeWeapon::InstallEarlyHooks();
 
     // 0. Block deprecated mod-menu builds shipped as dxgi.dll BEFORE doing
     //    anything else (hash every dxgi.dll in the game directory).
