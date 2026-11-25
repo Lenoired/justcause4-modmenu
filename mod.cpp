@@ -186,7 +186,7 @@ static const char* GetPlatformName() {
 }
 
 // Mod menu version shown in the header banner. Bump on releases.
-static const char* kModMenuVersion = "1.45";
+static const char* kModMenuVersion = "1.5";
 typedef void(*SendEvent_t)(const char*, void*);
 typedef void(__cdecl* report_gsfailure_t)(uintptr_t);
 static report_gsfailure_t o_report_gsfailure = nullptr;
@@ -569,6 +569,7 @@ void __fastcall hk_ProcessCameraContext_Orbit(uintptr_t thisptr, uintptr_t pipeC
 bool g_FirstPerson = false;
 bool g_FpHideHead = true;
 bool g_FpHideBody = true;
+bool g_FpHideVehicleWindows = true;
 float g_FpForwardOffset = 0.12f;
 float g_FpUpOffset = 0.06f;
 float g_FpRightOffset = 0.0f;
@@ -910,6 +911,755 @@ void __fastcall hk_CharacterSetOpacity(uintptr_t chOrGameObj, float opacity) {
         opacity = 1.0f;
     }
     o_CharacterSetOpacity(chOrGameObj, opacity);
+}
+
+// ============================================================================
+// FIRST PERSON SUB-OPTION: HIDE ONLY RICO'S VEHICLE WINDOWS & WINDSHIELDS
+// ============================================================================
+// Only tracks Rico's current vehicle and refreshes up to 3 times on entry
+// (immediate + delayed retries for streamed parts) so steady-state FPS cost is zero.
+static constexpr size_t kVehWinMaxParts = 64;
+static uintptr_t g_VehWinList[2][kVehWinMaxParts] = {};
+static size_t g_VehWinCount[2] = { 0, 0 };
+static std::atomic<int> g_VehWinActiveBuf{ 0 };
+static std::atomic<bool> g_FpVehWinActive{ false };
+static std::atomic<bool> g_FpVehWinRescanRequested{ false };
+static std::atomic<uintptr_t> g_CachedPlayerVehiclePtr{ 0 };
+
+typedef uintptr_t(__fastcall* GetCharacterVehiclePtr_t)(uintptr_t ch);
+typedef void(__fastcall* ModelInstanceAddToRender_t)(uintptr_t self, void* p1, void* p2,
+    uint8_t p3, uint8_t p4, uint8_t p5, uint8_t p6, void* p7, void* p8, float p9);
+typedef void(__fastcall* RenderBlockWindowDraw_t)(void* self, void* renderCtx, uintptr_t rbiInfo);
+static GetCharacterVehiclePtr_t fn_GetCharacterVehiclePtr = nullptr;
+static ModelInstanceAddToRender_t o_ModelInstanceAddToRender = nullptr;
+static RenderBlockWindowDraw_t o_RenderBlockWindowDraw = nullptr;
+
+static bool ContainsSubstrCI(const char* hay, const char* needle) {
+    if (!hay || !needle || !needle[0]) return false;
+    size_t nlen = strlen(needle);
+    for (const char* p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nlen && p[i]) {
+            char a = p[i]; if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+            char b = needle[i]; if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+            if (a != b) break;
+            i++;
+        }
+        if (i == nlen) return true;
+    }
+    return false;
+}
+
+static bool ReadCStringSafe(uintptr_t addr, char* buf, size_t maxLen) {
+    if (!addr || addr < 0x10000 || addr > 0x7FFFFFFFFFFFULL || !buf || maxLen == 0) return false;
+    SIZE_T read = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), (void*)addr, buf, maxLen - 1, &read) && read == 0) {
+        buf[0] = '\0';
+        return false;
+    }
+    buf[maxLen - 1] = '\0';
+    return buf[0] != '\0';
+}
+
+static bool HasMetaWindowTag(uintptr_t mi) {
+    uintptr_t metaFlags = 0;
+    if (!FastRead<uintptr_t>(mi + 0x90, metaFlags) || !metaFlags) return false;
+    uintptr_t p = metaFlags & ~uintptr_t(3);
+    if (!p || p < 0x10000) return false;
+    if (metaFlags & 1) {
+        uintptr_t scoped = 0;
+        if (!FastRead<uintptr_t>(p + 0x14, scoped) || !scoped || scoped < 0x10000) return false;
+        p = scoped;
+    }
+    uint16_t tag = 0;
+    return FastRead<uint16_t>(p, tag) && tag == 0x200;
+}
+
+static bool IsHiddenVehicleWindowMI(uintptr_t mi) {
+    if (!mi) return false;
+    int buf = g_VehWinActiveBuf.load(std::memory_order_acquire);
+    size_t n = g_VehWinCount[buf];
+    const uintptr_t* list = g_VehWinList[buf];
+    for (size_t i = 0; i < n; i++) {
+        if (list[i] == mi) return true;
+    }
+    return false;
+}
+
+static void RefreshFpVehicleWindowSet(bool worldReady) {
+    static uintptr_t s_TrackedVeh = 0;
+    static int s_ScanPass = 0;
+    static DWORD s_LastScanTick = 0;
+
+    if (g_FpVehWinRescanRequested.exchange(false, std::memory_order_relaxed)) {
+        s_ScanPass = 0;
+        s_LastScanTick = 0;
+    }
+
+    uintptr_t ch = worldReady ? GetLocalCharacterPtr() : 0;
+    uintptr_t curVeh = (ch && fn_GetCharacterVehiclePtr) ? fn_GetCharacterVehiclePtr(ch) : 0;
+    if (curVeh < 0x10000 || curVeh > 0x00007FFFFFFFFFFFULL) curVeh = 0;
+    g_CachedPlayerVehiclePtr.store(curVeh, std::memory_order_relaxed);
+
+    if (!worldReady || !g_FirstPerson || !g_FpHideVehicleWindows || g_FreeCam || !g_ExeBase) {
+        if (s_TrackedVeh != 0 || g_FpVehWinActive.load(std::memory_order_relaxed)) {
+            s_TrackedVeh = 0;
+            s_ScanPass = 0;
+            g_FpVehWinActive.store(false, std::memory_order_relaxed);
+        }
+        return;
+    }
+
+    if (!curVeh) {
+        if (s_TrackedVeh != 0 || g_FpVehWinActive.load(std::memory_order_relaxed)) {
+            s_TrackedVeh = 0;
+            s_ScanPass = 0;
+            g_FpVehWinActive.store(false, std::memory_order_relaxed);
+        }
+        return;
+    }
+
+    if (curVeh != s_TrackedVeh) {
+        s_TrackedVeh = curVeh;
+        s_ScanPass = 0;
+        s_LastScanTick = 0;
+    }
+
+    // Only scan a few times (3 passes) after Rico enters a vehicle, then stop completely.
+    if (s_ScanPass >= 3) return;
+    DWORD now = GetTickCount();
+    if (s_ScanPass > 0 && (now - s_LastScanTick) < 250) return;
+
+    s_LastScanTick = now;
+    s_ScanPass++;
+
+    int nextBuf = 1 - g_VehWinActiveBuf.load(std::memory_order_relaxed);
+    uintptr_t* list = g_VehWinList[nextBuf];
+    size_t count = 0;
+
+    uintptr_t pfx = 0;
+    uintptr_t partInstances = 0, validIndices = 0;
+    uint32_t numValid = 0;
+    if (FastRead<uintptr_t>(curVeh + 0x13DE8, pfx) && pfx >= 0x10000 && pfx <= 0x00007FFFFFFFFFFFULL &&
+        FastRead<uintptr_t>(pfx + 0x1A8, partInstances) && partInstances >= 0x10000 &&
+        FastRead<uintptr_t>(pfx + 0x1B0, validIndices) && validIndices >= 0x10000 &&
+        FastRead<uint32_t>(pfx + 0x1B8, numValid) && numValid > 0 && numValid <= 256) {
+        char nameBuf[96];
+        char dmgBuf[64];
+        for (uint32_t j = 0; j < numValid && count < kVehWinMaxParts; j++) {
+            uint32_t partIdx = 0;
+            if (!FastRead<uint32_t>(validIndices + (uintptr_t)j * 4, partIdx) || partIdx > 512) continue;
+            uintptr_t part = partInstances + (uintptr_t)partIdx * 0x108;
+            uintptr_t mi = 0;
+            if (!FastRead<uintptr_t>(part + 0x80, mi) || mi < 0x10000 || mi > 0x00007FFFFFFFFFFFULL) continue;
+
+            bool isWindow = HasMetaWindowTag(mi);
+            if (!isWindow) {
+                uintptr_t props = 0;
+                if (FastRead<uintptr_t>(part + 0x98, props) && props >= 0x10000) {
+                    uintptr_t namePtr = 0, dmgPtr = 0;
+                    if (FastRead<uintptr_t>(props + 0x0, namePtr) && ReadCStringSafe(namePtr, nameBuf, sizeof(nameBuf))) {
+                        if (ContainsSubstrCI(nameBuf, "window") ||
+                            ContainsSubstrCI(nameBuf, "windshield") ||
+                            ContainsSubstrCI(nameBuf, "windscreen") ||
+                            ContainsSubstrCI(nameBuf, "canopy")) {
+                            isWindow = true;
+                        }
+                    }
+                    if (!isWindow && FastRead<uintptr_t>(props + 0x10, dmgPtr) && ReadCStringSafe(dmgPtr, dmgBuf, sizeof(dmgBuf))) {
+                        if (ContainsSubstrCI(dmgBuf, "window") || ContainsSubstrCI(dmgBuf, "glass")) {
+                            isWindow = true;
+                        }
+                    }
+                }
+            }
+            if (isWindow) {
+                bool dup = false;
+                for (size_t k = 0; k < count; k++) {
+                    if (list[k] == mi) { dup = true; break; }
+                }
+                if (!dup) list[count++] = mi;
+            }
+        }
+    }
+
+    g_VehWinCount[nextBuf] = count;
+    g_VehWinActiveBuf.store(nextBuf, std::memory_order_release);
+    g_FpVehWinActive.store(count > 0, std::memory_order_release);
+}
+
+void __fastcall hk_ModelInstanceAddToRender(uintptr_t self, void* p1, void* p2,
+    uint8_t p3, uint8_t p4, uint8_t p5, uint8_t p6, void* p7, void* p8, float p9) {
+    if (g_FpVehWinActive.load(std::memory_order_relaxed) && IsHiddenVehicleWindowMI(self)) {
+        return;
+    }
+    o_ModelInstanceAddToRender(self, p1, p2, p3, p4, p5, p6, p7, p8, p9);
+}
+
+void __fastcall hk_RenderBlockWindowDraw(void* self, void* renderCtx, uintptr_t rbiInfo) {
+    if (g_FpVehWinActive.load(std::memory_order_relaxed) && IsHiddenVehicleWindowMI(rbiInfo)) {
+        return;
+    }
+    o_RenderBlockWindowDraw(self, renderCtx, rbiInfo);
+}
+
+// ============================================================================
+// ENEMY AI: 100% ACCURACY (0% MISS) & EXTREME AGGRESSION
+// ============================================================================
+bool g_AiPerfectAccuracy = false;
+bool g_AiExtremeAggression = false;
+bool g_AiAccEnemies = true;
+bool g_AiAccArmyOfChaos = false;
+bool g_AiAggrEnemies = true;
+bool g_AiAggrArmyOfChaos = false;
+
+typedef void(__fastcall* AdjustAimPosition_t)(void* self, void* aimPos, float accuracy, float rightScale, float upScale);
+typedef uint32_t(__fastcall* AiAdjustAimPosition_t)(void* ch, void* targetPos, float startDist, int32_t dir, float accuracy, void* outPos);
+typedef uint32_t(__fastcall* AiAdjustAimPositionTS_t)(uint32_t p1, uint32_t p2, float p3, int32_t p4, float p5, float p6, float p7, float p8, float* p9, void* p10);
+typedef float(__fastcall* GetCurrentScatterValue_t)(uintptr_t self);
+typedef bool(__fastcall* ShouldProjectileOffsetBeUsed_t)(uintptr_t self);
+typedef uint32_t(__fastcall* AiVehicleFireWeaponType_t)(uint32_t p1, void* p2, void* p3, float p4, float p5, float p6, bool p7, float p8, float p9, float p10, float p11, int32_t p12, void* p13);
+typedef void(__fastcall* UpdateFirePatternAndAIMissVector_t)(uintptr_t self, void* p1, bool* p2, float p3);
+typedef uint32_t(__fastcall* AiAcquireActionToken_t)(uint32_t p1, void* p2, int32_t p3, void* p4);
+typedef uint32_t(__fastcall* AiActionTokenAvailable_t)(int32_t p1, void* p2);
+typedef uint32_t(__fastcall* OnPruneActionToken_t)(void* self, int32_t p1, uint32_t p2, void* p3);
+typedef uint32_t(__fastcall* AiCombatCoordinatorOrdersAttack_t)(void* p1);
+typedef uint32_t(__fastcall* AiIsVisibleOnScreen_t)(void* p1);
+typedef uint32_t(__fastcall* AiFireBurstMountedWeapon_t)(uint32_t p1, void* p2, uint32_t p3, float p4, float p5, float p6, float p7, void* p8);
+typedef uint32_t(__fastcall* CharacterWeaponAimImpl_t)(uint32_t p1, float accuracy, int32_t p3, void* p4);
+typedef uint32_t(__fastcall* AgentWeaponAimImpl_t)(uint32_t p1, float accuracy, int32_t p3, void* p4);
+typedef uint32_t(__fastcall* AiCharacterWeaponSweep_t)(int32_t p1, void* p2, uint32_t p3, int32_t p4, float p5, void* p6);
+typedef uint32_t(__fastcall* CharacterWeaponSweepNodesImpl_t)(void* p1, void* p2, int32_t p3, int32_t p4, float p5, float p6, void* p7);
+typedef uint32_t(__fastcall* CharacterWeaponSweepToTargetImpl_t)(void* p1, uint32_t p2, int32_t p3, int32_t p4, float p5, float p6, float p7, float p8, void* p9);
+typedef void(__fastcall* OffsetAiAim_t)(void* self, void* targetPos);
+typedef bool(__fastcall* FiringModuleGetShotMatrix_t)(uintptr_t self, void* weaponData, void* outMat, bool ignoreScatter, bool useBarrel);
+typedef uint32_t(__fastcall* AiVehicleWeaponSweep_t)(uint32_t p1, void* p2, uint32_t p3, int32_t p4, int32_t p5, float p6, void* p7);
+typedef uint32_t(__fastcall* AiVehicleWeaponSweepNodes_t)(uint32_t p1, void* p2, int32_t p3, void* p4, int32_t p5, int32_t p6, float p7, float p8, void* p9);
+
+static AdjustAimPosition_t o_AdjustAimPosition = nullptr;
+static AiAdjustAimPosition_t o_AiAdjustAimPosition = nullptr;
+static AiAdjustAimPositionTS_t o_AiAdjustAimPositionTS = nullptr;
+static GetCurrentScatterValue_t o_GetCurrentScatterValue = nullptr;
+static ShouldProjectileOffsetBeUsed_t o_ShouldProjectileOffsetBeUsed = nullptr;
+static AiVehicleFireWeaponType_t o_AiVehicleFireWeaponType = nullptr;
+static UpdateFirePatternAndAIMissVector_t o_UpdateFirePatternAndAIMissVector = nullptr;
+static AiAcquireActionToken_t o_AiAcquireActionToken = nullptr;
+static AiActionTokenAvailable_t o_AiActionTokenAvailable = nullptr;
+static OnPruneActionToken_t o_OnPruneActionToken = nullptr;
+static AiCombatCoordinatorOrdersAttack_t o_AiCombatCoordinatorOrdersAttack = nullptr;
+static AiIsVisibleOnScreen_t o_AiIsVisibleOnScreen = nullptr;
+static AiFireBurstMountedWeapon_t o_AiFireBurstMountedWeapon = nullptr;
+static CharacterWeaponAimImpl_t o_CharacterWeaponAimImpl = nullptr;
+static AgentWeaponAimImpl_t o_AgentWeaponAimImpl = nullptr;
+static AiCharacterWeaponSweep_t o_AiCharacterWeaponSweep = nullptr;
+static CharacterWeaponSweepNodesImpl_t o_CharacterWeaponSweepNodesImpl = nullptr;
+static CharacterWeaponSweepToTargetImpl_t o_CharacterWeaponSweepToTargetImpl = nullptr;
+static OffsetAiAim_t o_OffsetAiAim = nullptr;
+static FiringModuleGetShotMatrix_t o_FiringModuleGetShotMatrix = nullptr;
+static AiVehicleWeaponSweep_t o_AiVehicleWeaponSweep = nullptr;
+static AiVehicleWeaponSweepNodes_t o_AiVehicleWeaponSweepNodes = nullptr;
+
+typedef void(__fastcall* AmmoEraseIdx_t)(uintptr_t mgr, uint32_t idx);
+typedef void(__fastcall* AmmoErasePtr_t)(uintptr_t mgr, uintptr_t ammo);
+typedef bool(__fastcall* AmmoUpdatePostSim_t)(uintptr_t mgr, void* ctx);
+static AmmoEraseIdx_t fn_AmmoEraseIdx = nullptr;
+static AmmoErasePtr_t o_AmmoErasePtr = nullptr;
+static AmmoUpdatePostSim_t o_AmmoUpdatePostSim = nullptr;
+static std::atomic<uint64_t> g_PendingHighAmmoMask{0};
+
+typedef bool(__fastcall* RttiIsType_t)(uintptr_t self, uintptr_t typeIdPtr);
+
+static inline bool IsValidUserPtr(const void* p) {
+    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
+    return a >= 0x10000 && a <= 0x00007FFFFFFFFFFFULL;
+}
+
+static bool IsGameObjectType(uintptr_t gameObj, uintptr_t typeIdRva) {
+    if (!gameObj || gameObj < 0x10000 || gameObj > 0x00007FFFFFFFFFFFULL || (gameObj & 7) != 0) return false;
+    if (!g_ExeBase || !typeIdRva) return false;
+    const uintptr_t exeEnd = g_ExeBase + g_Addr_10000000;
+    uintptr_t vtable = 0, fnIsType = 0;
+    if (!FastRead<uintptr_t>(gameObj, vtable) || vtable < g_ExeBase || vtable >= exeEnd || (vtable & 7) != 0) return false;
+    if (!FastRead<uintptr_t>(vtable + 0x10, fnIsType) || fnIsType < g_ExeBase || fnIsType >= exeEnd) return false;
+    return reinterpret_cast<RttiIsType_t>(fnIsType)(gameObj, g_ExeBase + typeIdRva);
+}
+
+static int GetCharacterFaction(uintptr_t charPtr) {
+    if (!charPtr || charPtr < 0x10000) return -1;
+    int32_t faction = -1;
+    if (FastRead<int32_t>(charPtr + 0x27A4, faction)) return faction;
+    return -1;
+}
+
+static int GetGameObjectFaction(uintptr_t gameObj) {
+    if (!gameObj || gameObj < 0x10000) return -1;
+    if (IsGameObjectType(gameObj, g_Addr_1D008E8)) {
+        return GetCharacterFaction(gameObj - 0x10);
+    }
+    if (IsGameObjectType(gameObj, g_Addr_1D00910)) {
+        uintptr_t vehPtr = gameObj - 0x10;
+        // Read the Present-cached vehicle pointer rather than calling CCharacter::GetVehiclePtr from AI worker threads
+        if (g_CachedPlayerVehiclePtr.load(std::memory_order_relaxed) == vehPtr) return 0; // FACTION_RICO
+        int32_t faction = -1;
+        if (FastRead<int32_t>(vehPtr + 0x13DB0, faction)) return faction;
+        return -1;
+    }
+    if (IsGameObjectType(gameObj, g_Addr_1D00940)) {
+        int32_t faction = -1;
+        if (FastRead<int32_t>(gameObj - 0x10 + 0x8DC, faction)) return faction;
+        return -1;
+    }
+    return -1;
+}
+
+static bool ShouldAffectAiFaction(int faction, bool forAggr) {
+    // EFaction: 0=Rico, 1=Civilian, 2=Rebel (Army of Chaos), 3..6=Hostiles (Pirate/Police/Soldier/BlackHand)
+    if (faction <= 1) return false;
+    const bool chaos = forAggr ? g_AiAggrArmyOfChaos : g_AiAccArmyOfChaos;
+    const bool enemies = forAggr ? g_AiAggrEnemies : g_AiAccEnemies;
+    return (faction == 2) ? chaos : enemies;
+}
+
+static bool IsFactionScopeEnabled(bool forAggr) {
+    return forAggr ? (g_AiAggrEnemies || g_AiAggrArmyOfChaos) : (g_AiAccEnemies || g_AiAccArmyOfChaos);
+}
+
+static bool IsAiWeaponPtr(uintptr_t weaponPtr) {
+    if (!weaponPtr || weaponPtr < 0x10000) return false;
+    uint8_t isPlayer = 1;
+    return FastRead<uint8_t>(weaponPtr + 0x609, isPlayer) && isPlayer == 0;
+}
+
+static int GetWeaponFaction(uintptr_t weaponPtr) {
+    if (!IsAiWeaponPtr(weaponPtr)) return -1;
+    uintptr_t px = 0, pi = 0;
+    int32_t useCount = 0;
+    if (FastRead<uintptr_t>(weaponPtr + 0x5D0, px) && px >= 0x10000 &&
+        FastRead<uintptr_t>(weaponPtr + 0x5D8, pi) && pi >= 0x10000 &&
+        FastRead<int32_t>(pi + 8, useCount) && useCount > 0) {
+        return GetCharacterFaction(px);
+    }
+    px = 0; pi = 0; useCount = 0;
+    if (FastRead<uintptr_t>(weaponPtr + 0x5E0, px) && px >= 0x10000 &&
+        FastRead<uintptr_t>(weaponPtr + 0x5E8, pi) && pi >= 0x10000 &&
+        FastRead<int32_t>(pi + 8, useCount) && useCount > 0) {
+        return GetGameObjectFaction(px);
+    }
+    uintptr_t fmBegin = 0, fmEnd = 0;
+    if (FastRead<uintptr_t>(weaponPtr + 0x638, fmBegin) && FastRead<uintptr_t>(weaponPtr + 0x640, fmEnd) &&
+        fmBegin >= 0x10000 && fmEnd > fmBegin && fmEnd - fmBegin <= 0x200) {
+        for (uintptr_t it = fmBegin; it < fmEnd; it += 8) {
+            uintptr_t fm = 0;
+            if (!FastRead<uintptr_t>(it, fm) || fm < 0x10000) continue;
+            uintptr_t wcBegin = 0, wcEnd = 0;
+            if (!FastRead<uintptr_t>(fm + 0x2B8, wcBegin) || !FastRead<uintptr_t>(fm + 0x2C0, wcEnd) ||
+                wcBegin < 0x10000 || wcEnd <= wcBegin || wcEnd - wcBegin > 0x400) continue;
+            for (uintptr_t w = wcBegin; w < wcEnd; w += 16) {
+                uintptr_t comp = 0;
+                int32_t kind = 0;
+                if (FastRead<uintptr_t>(w, comp) && comp >= 0x10000 &&
+                    FastRead<int32_t>(comp + 0x1E8, kind) && kind == 2 &&
+                    IsGameObjectType(comp, g_Addr_1D66ED8)) {
+                    int32_t faction = -1;
+                    if (FastRead<int32_t>(comp + 0x458, faction)) return faction;
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+static int GetAiUserdataFaction(void* ud) {
+    if (!ud) return -1;
+    uintptr_t owner = 0;
+    if (!FastRead<uintptr_t>(reinterpret_cast<uintptr_t>(ud) + 0x30, owner) || owner < 0x10000) return -1;
+    return GetGameObjectFaction(owner);
+}
+
+static bool ShouldAffectAiCharacter(uintptr_t charPtr, bool forAggr) {
+    if (!IsFactionScopeEnabled(forAggr) || !charPtr || charPtr < 0x10000) return false;
+    uintptr_t player = GetPlayerPtr();
+    uintptr_t playerChar = 0;
+    if (player && FastRead<uintptr_t>(player + 0x68, playerChar) && playerChar == charPtr) return false;
+    return ShouldAffectAiFaction(GetCharacterFaction(charPtr), forAggr);
+}
+
+static bool ShouldAffectAiUserdata(void* ud, bool forAggr) {
+    if (!IsFactionScopeEnabled(forAggr)) return false;
+    return ShouldAffectAiFaction(GetAiUserdataFaction(ud), forAggr);
+}
+
+static bool ShouldAffectAiWeapon(uintptr_t weaponPtr, bool forAggr) {
+    if (!IsFactionScopeEnabled(forAggr)) return false;
+    return ShouldAffectAiFaction(GetWeaponFaction(weaponPtr), forAggr);
+}
+
+static bool ShouldAffectAiFiringModule(uintptr_t fmPtr, bool forAggr) {
+    if (!IsFactionScopeEnabled(forAggr) || !fmPtr || fmPtr < 0x10000) return false;
+    uintptr_t owner = 0;
+    return FastRead<uintptr_t>(fmPtr + 0x310, owner) && ShouldAffectAiWeapon(owner, forAggr);
+}
+
+void __fastcall hk_AdjustAimPosition(void* self, void* aimPos, float accuracy, float rightScale, float upScale) {
+    uintptr_t ch = 0;
+    if (g_AiPerfectAccuracy && self && FastRead<uintptr_t>(reinterpret_cast<uintptr_t>(self) + 0x58, ch) &&
+        ShouldAffectAiCharacter(ch, false)) return;
+    o_AdjustAimPosition(self, aimPos, accuracy, rightScale, upScale);
+}
+
+uint32_t __fastcall hk_AiAdjustAimPosition(void* ch, void* targetPos, float startDist, int32_t dir, float accuracy, void* outPos) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiCharacter(reinterpret_cast<uintptr_t>(ch), false)) accuracy = 1.0f;
+    return o_AiAdjustAimPosition(ch, targetPos, startDist, dir, accuracy, outPos);
+}
+
+uint32_t __fastcall hk_AiAdjustAimPositionTS(uint32_t p1, uint32_t p2, float p3, int32_t p4, float p5, float p6, float p7, float p8, float* p9, void* p10) {
+    uint32_t ret = o_AiAdjustAimPositionTS(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);
+    if (g_AiPerfectAccuracy && p1 == 1 && p9 && ShouldAffectAiUserdata(p10, false)) {
+        *p9 = 1.0f;
+        return 1;
+    }
+    return ret;
+}
+
+float __fastcall hk_GetCurrentScatterValue(uintptr_t self) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiFiringModule(self, false)) return 0.0f;
+    return o_GetCurrentScatterValue(self);
+}
+
+bool __fastcall hk_ShouldProjectileOffsetBeUsed(uintptr_t self) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiWeapon(self, false)) return false;
+    return o_ShouldProjectileOffsetBeUsed(self);
+}
+
+uint32_t __fastcall hk_AiVehicleFireWeaponType(uint32_t p1, void* p2, void* p3, float p4, float p5, float p6, bool p7, float p8, float p9, float p10, float p11, int32_t p12, void* p13) {
+    const bool doAcc = g_AiPerfectAccuracy && IsFactionScopeEnabled(false);
+    const bool doAggr = g_AiExtremeAggression && IsFactionScopeEnabled(true);
+    if (doAcc || doAggr) {
+        const int faction = GetAiUserdataFaction(p13);
+        if (doAcc && ShouldAffectAiFaction(faction, false)) p4 = 0.0f;
+        if (doAggr && ShouldAffectAiFaction(faction, true)) {
+            p10 = 0.0f;
+            p11 = 0.0f;
+            if (p1 == 1 && IsValidUserPtr(p2)) {
+                *(uint8_t*)p2 = 1;
+                *(uint32_t*)((char*)p2 + 4) = 0;
+            }
+        }
+    }
+    return o_AiVehicleFireWeaponType(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13);
+}
+
+void __fastcall hk_UpdateFirePatternAndAIMissVector(uintptr_t self, void* p1, bool* p2, float p3) {
+    if (g_AiExtremeAggression) {
+        bool affect = ShouldAffectAiFiringModule(self, true);
+        if (!affect && IsValidUserPtr(p1)) {
+            uintptr_t ch = 0;
+            if (FastRead<uintptr_t>(reinterpret_cast<uintptr_t>(p1), ch)) {
+                affect = ShouldAffectAiCharacter(ch, true);
+            }
+        }
+        if (affect) {
+            FastWrite<float>(self + 0x330, 0.0f); // m_BurstCooldownTimer
+            FastWrite<float>(self + 0x534, 0.0f); // m_FireDelayTimer
+            FastWrite<float>(self + 0x584, 0.0f); // m_ReloadTimeLeft
+            return;
+        }
+    }
+    o_UpdateFirePatternAndAIMissVector(self, p1, p2, p3);
+}
+
+uint32_t __fastcall hk_AiAcquireActionToken(uint32_t p1, void* p2, int32_t p3, void* p4) {
+    if (g_AiExtremeAggression && ShouldAffectAiUserdata(p4, true)) {
+        const bool p2ok = IsValidUserPtr(p2);
+        if (p1 == 0) {
+            if (p2ok) *(uint32_t*)p2 = 1;
+            return 4;
+        }
+        if (p1 == 3) return p2ok ? *(uint32_t*)p2 : 0;
+        if (p1 == 4) {
+            if (!p2ok) return 0;
+            uint32_t s = *(uint32_t*)p2;
+            return (s == 1) ? *(uint32_t*)((char*)p2 + 4) : s;
+        }
+        return 4;
+    }
+    return o_AiAcquireActionToken(p1, p2, p3, p4);
+}
+
+uint32_t __fastcall hk_AiActionTokenAvailable(int32_t p1, void* p2) {
+    if (g_AiExtremeAggression && ShouldAffectAiUserdata(p2, true)) return 1;
+    return o_AiActionTokenAvailable(p1, p2);
+}
+
+uint32_t __fastcall hk_OnPruneActionToken(void* self, int32_t p1, uint32_t p2, void* p3) {
+    if (g_AiExtremeAggression && ShouldAffectAiUserdata(p3, true)) return 1;
+    return o_OnPruneActionToken(self, p1, p2, p3);
+}
+
+uint32_t __fastcall hk_AiCombatCoordinatorOrdersAttack(void* p1) {
+    if (g_AiExtremeAggression && ShouldAffectAiUserdata(p1, true)) return 1;
+    return o_AiCombatCoordinatorOrdersAttack(p1);
+}
+
+uint32_t __fastcall hk_AiIsVisibleOnScreen(void* p1) {
+    if (g_AiExtremeAggression && ShouldAffectAiUserdata(p1, true)) return 1;
+    return o_AiIsVisibleOnScreen(p1);
+}
+
+uint32_t __fastcall hk_AiFireBurstMountedWeapon(uint32_t p1, void* p2, uint32_t p3, float p4, float p5, float p6, float p7, void* p8) {
+    if (g_AiExtremeAggression && ShouldAffectAiUserdata(p8, true)) {
+        p6 = 0.0f;
+        p7 = 0.0f;
+        if (p1 == 1 && IsValidUserPtr(p2)) {
+            *(uint8_t*)((char*)p2 + 4) = 1;
+            *(float*)p2 = (p5 > 0.1f) ? p5 : 10.0f;
+        }
+    }
+    return o_AiFireBurstMountedWeapon(p1, p2, p3, p4, p5, p6, p7, p8);
+}
+
+uint32_t __fastcall hk_CharacterWeaponAimImpl(uint32_t p1, float accuracy, int32_t p3, void* p4) {
+    // Disables the bounding-box hit/miss randomization so infantry aim dead-center at target
+    if (g_AiPerfectAccuracy && ShouldAffectAiUserdata(p4, false)) accuracy = -1.0f;
+    return o_CharacterWeaponAimImpl(p1, accuracy, p3, p4);
+}
+
+uint32_t __fastcall hk_AgentWeaponAimImpl(uint32_t p1, float accuracy, int32_t p3, void* p4) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiUserdata(p4, false)) accuracy = -1.0f;
+    return o_AgentWeaponAimImpl(p1, accuracy, p3, p4);
+}
+
+uint32_t __fastcall hk_AiCharacterWeaponSweep(int32_t p1, void* p2, uint32_t p3, int32_t p4, float p5, void* p6) {
+    if (g_AiPerfectAccuracy && p1 == 1 && IsValidUserPtr(p2) && ShouldAffectAiUserdata(p6, false)) {
+        if (*(uint8_t*)p2 == 0 && p5 > 0.0f) *(uint8_t*)p2 = 1;
+        *(float*)((char*)p2 + 4) = 0.0f;
+    }
+    return o_AiCharacterWeaponSweep(p1, p2, p3, p4, p5, p6);
+}
+
+uint32_t __fastcall hk_CharacterWeaponSweepNodesImpl(void* p1, void* p2, int32_t p3, int32_t p4, float p5, float p6, void* p7) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiUserdata(p7, false)) p6 = 0.0f;
+    return o_CharacterWeaponSweepNodesImpl(p1, p2, p3, p4, p5, p6, p7);
+}
+
+uint32_t __fastcall hk_CharacterWeaponSweepToTargetImpl(void* p1, uint32_t p2, int32_t p3, int32_t p4, float p5, float p6, float p7, float p8, void* p9) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiUserdata(p9, false)) {
+        p5 = 0.0f;
+        p6 = 0.0f;
+    }
+    return o_CharacterWeaponSweepToTargetImpl(p1, p2, p3, p4, p5, p6, p7, p8, p9);
+}
+
+void __fastcall hk_OffsetAiAim(void* self, void* targetPos) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiFiringModule(reinterpret_cast<uintptr_t>(self), false)) return;
+    o_OffsetAiAim(self, targetPos);
+}
+
+bool __fastcall hk_FiringModuleGetShotMatrix(uintptr_t self, void* weaponData, void* outMat, bool ignoreScatter, bool useBarrel) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiFiringModule(self, false)) ignoreScatter = true;
+    return o_FiringModuleGetShotMatrix(self, weaponData, outMat, ignoreScatter, useBarrel);
+}
+
+uint32_t __fastcall hk_AiVehicleWeaponSweep(uint32_t p1, void* p2, uint32_t p3, int32_t p4, int32_t p5, float p6, void* p7) {
+    if (g_AiPerfectAccuracy && p1 == 1 && IsValidUserPtr(p2) && ShouldAffectAiUserdata(p7, false)) {
+        if (*(uint8_t*)p2 == 0) *(uint8_t*)p2 = 1;
+        *(float*)((char*)p2 + 4) = 0.0f;
+        if (p6 <= 0.0f) p6 = 1.0f;
+    }
+    return o_AiVehicleWeaponSweep(p1, p2, p3, p4, p5, p6, p7);
+}
+
+uint32_t __fastcall hk_AiVehicleWeaponSweepNodes(uint32_t p1, void* p2, int32_t p3, void* p4, int32_t p5, int32_t p6, float p7, float p8, void* p9) {
+    if (g_AiPerfectAccuracy && ShouldAffectAiUserdata(p9, false)) p8 = 0.0f;
+    return o_AiVehicleWeaponSweepNodes(p1, p2, p3, p4, p5, p6, p7, p8, p9);
+}
+
+void __fastcall hk_AmmoErasePtr(uintptr_t mgr, uintptr_t ammo) {
+    if (mgr >= 0x10000 && mgr <= 0x00007FFFFFFFFFFFULL && ammo && fn_AmmoEraseIdx) {
+        // CAmmunitionManager::Erase(CAmmunition*) truncates indices 256..319 to uint8_t in m_EraseElemts;
+        // queue upper E_POOL_GAMEOBJECT slots in a full-width bitmask and flush via Erase(uint32_t).
+        const uint64_t activeHigh = *reinterpret_cast<const volatile uint64_t*>(mgr + 0xE3EC0);
+        if (activeHigh) {
+            uintptr_t* slots = reinterpret_cast<uintptr_t*>(mgr + 0xE34A0);
+            for (uint32_t k = 0; k < 64; ++k) {
+                if (((activeHigh >> k) & 1ULL) != 0 && slots[256u + k] == ammo) {
+                    g_PendingHighAmmoMask.fetch_or(1ULL << k, std::memory_order_acq_rel);
+                    return;
+                }
+            }
+        }
+    }
+    o_AmmoErasePtr(mgr, ammo);
+}
+
+bool __fastcall hk_AmmoUpdatePostSim(uintptr_t mgr, void* ctx) {
+    bool ret = o_AmmoUpdatePostSim(mgr, ctx);
+    if (mgr && fn_AmmoEraseIdx) {
+        uint64_t mask = g_PendingHighAmmoMask.exchange(0, std::memory_order_acq_rel);
+        for (uint32_t k = 0; mask && k < 64; ++k) {
+            if (mask & (1ULL << k)) {
+                fn_AmmoEraseIdx(mgr, 256u + k);
+                mask &= ~(1ULL << k);
+            }
+        }
+    }
+    return ret;
+}
+
+struct AiCoverProfileDefaults {
+    float hideBase;
+    float hideRand;
+    uint32_t suppressedHide;
+};
+
+static void SyncAiCombatOverrides(bool worldReady) {
+    if (!g_ExeBase) return;
+
+    // 1. CAiSystem::m_SniperTweaks (+136) and m_CoverBehaviors (+120)
+    static bool s_SniperCaptured = false;
+    static float s_DefSniperPerfect = 1.0f, s_DefSniperHover = 0.5f, s_DefSniperMin = 2.0f, s_DefSniperRandDist = 1.5f;
+    static bool s_CoverCaptured = false;
+    static uintptr_t s_CoverResPtr = 0;
+    static uintptr_t s_LastWrittenCoverRes = 0;
+    static float s_DefGrenBase = 0.0f, s_DefGrenRand = 0.0f;
+    static std::vector<AiCoverProfileDefaults> s_DefCoverProfiles;
+    static bool s_AppliedAcc = false;
+    static bool s_AppliedAggr = false;
+    static DWORD s_LastRefreshTick = 0;
+
+    if (!worldReady) {
+        s_CoverCaptured = false;
+        s_CoverResPtr = 0;
+        s_LastWrittenCoverRes = 0;
+        s_DefCoverProfiles.clear();
+        return;
+    }
+
+    const bool wantEnemyAcc = g_AiPerfectAccuracy && g_AiAccEnemies;
+    const bool wantEnemyAggr = g_AiExtremeAggression && g_AiAggrEnemies;
+    const DWORD nowTick = GetTickCount();
+    const bool periodicRefresh = (wantEnemyAcc || wantEnemyAggr) && ((nowTick - s_LastRefreshTick) >= 500);
+    if (periodicRefresh) s_LastRefreshTick = nowTick;
+
+    if (g_Addr_2CB1D18) {
+        uintptr_t aiSys = 0;
+        if (FastRead<uintptr_t>(g_ExeBase + g_Addr_2CB1D18, aiSys) && aiSys >= 0x10000) {
+            uintptr_t sniper = aiSys + 136;
+            if (!s_SniperCaptured) {
+                FastRead<float>(sniper + 36, s_DefSniperPerfect);
+                FastRead<float>(sniper + 52, s_DefSniperHover);
+                FastRead<float>(sniper + 56, s_DefSniperMin);
+                FastRead<float>(sniper + 60, s_DefSniperRandDist);
+                s_SniperCaptured = true;
+            }
+            if (wantEnemyAcc) {
+                if (!s_AppliedAcc || periodicRefresh) {
+                    FastWrite<float>(sniper + 60, 0.0f); // m_InitialRandomAimDistance
+                }
+                s_AppliedAcc = true;
+            } else if (s_AppliedAcc) {
+                FastWrite<float>(sniper + 60, s_DefSniperRandDist);
+                s_AppliedAcc = false;
+            }
+
+            uintptr_t coverHandle = 0, coverRes = 0;
+            if (FastRead<uintptr_t>(aiSys + 120, coverHandle) && coverHandle >= 0x10000 &&
+                FastRead<uintptr_t>(coverHandle, coverRes) && coverRes >= 0x10000) {
+                uintptr_t profPtr = 0;
+                uint32_t profCount = 0;
+                FastRead<uintptr_t>(coverRes + 8, profPtr);
+                FastRead<uint32_t>(coverRes + 16, profCount);
+                if (profCount > 64) profCount = 0;
+
+                if (!s_CoverCaptured || s_CoverResPtr != coverRes) {
+                    FastRead<float>(coverRes + 0, s_DefGrenBase);
+                    FastRead<float>(coverRes + 4, s_DefGrenRand);
+                    s_DefCoverProfiles.clear();
+                    if (profPtr >= 0x10000 && profCount > 0) {
+                        s_DefCoverProfiles.resize(profCount);
+                        for (uint32_t i = 0; i < profCount; i++) {
+                            uintptr_t entry = profPtr + (uintptr_t)i * 136;
+                            FastRead<float>(entry + 32, s_DefCoverProfiles[i].hideBase);
+                            FastRead<float>(entry + 36, s_DefCoverProfiles[i].hideRand);
+                            FastRead<uint32_t>(entry + 108, s_DefCoverProfiles[i].suppressedHide);
+                        }
+                    }
+                    s_CoverResPtr = coverRes;
+                    s_CoverCaptured = true;
+                }
+
+                if (wantEnemyAggr) {
+                    if (!s_AppliedAggr || s_LastWrittenCoverRes != coverRes || periodicRefresh) {
+                        FastWrite<float>(sniper + 36, 0.0f);
+                        FastWrite<float>(sniper + 52, 0.0f);
+                        FastWrite<float>(sniper + 56, 0.0f);
+                        FastWrite<float>(coverRes + 0, 0.25f);
+                        FastWrite<float>(coverRes + 4, 0.25f);
+                        if (profPtr >= 0x10000 && profCount == s_DefCoverProfiles.size()) {
+                            for (uint32_t i = 0; i < profCount; i++) {
+                                uintptr_t entry = profPtr + (uintptr_t)i * 136;
+                                FastWrite<float>(entry + 32, 0.05f);
+                                FastWrite<float>(entry + 36, 0.05f);
+                                FastWrite<uint32_t>(entry + 108, 0u);
+                            }
+                        }
+                        s_LastWrittenCoverRes = coverRes;
+                    }
+                } else if (s_AppliedAggr) {
+                    FastWrite<float>(sniper + 36, s_DefSniperPerfect);
+                    FastWrite<float>(sniper + 52, s_DefSniperHover);
+                    FastWrite<float>(sniper + 56, s_DefSniperMin);
+                    FastWrite<float>(coverRes + 0, s_DefGrenBase);
+                    FastWrite<float>(coverRes + 4, s_DefGrenRand);
+                    if (profPtr >= 0x10000 && profCount == s_DefCoverProfiles.size()) {
+                        for (uint32_t i = 0; i < profCount; i++) {
+                            uintptr_t entry = profPtr + (uintptr_t)i * 136;
+                            FastWrite<float>(entry + 32, s_DefCoverProfiles[i].hideBase);
+                            FastWrite<float>(entry + 36, s_DefCoverProfiles[i].hideRand);
+                            FastWrite<uint32_t>(entry + 108, s_DefCoverProfiles[i].suppressedHide);
+                        }
+                    }
+                    s_LastWrittenCoverRes = 0;
+                }
+            }
+        }
+    }
+
+    // 2. CCombatCoordinator::s_ClosestCoordinator
+    static bool s_CoordCaptured = false;
+    static int32_t s_DefMinActive = 5, s_DefMaxActive = 6;
+    static float s_DefEngageDist = 100.0f, s_DefDisengageDist = 150.0f, s_DefActDelay = 1.0f;
+
+    if (g_Addr_2CB2258) {
+        uintptr_t coord = 0;
+        if (FastRead<uintptr_t>(g_ExeBase + g_Addr_2CB2258, coord) && coord >= 0x10000) {
+            if (!s_CoordCaptured) {
+                FastRead<int32_t>(coord + 0x1D0, s_DefMinActive);
+                FastRead<int32_t>(coord + 0x1D4, s_DefMaxActive);
+                FastRead<float>(coord + 0x1E0, s_DefEngageDist);
+                FastRead<float>(coord + 0x1E4, s_DefDisengageDist);
+                FastRead<float>(coord + 0x1E8, s_DefActDelay);
+                s_CoordCaptured = true;
+            }
+            if (wantEnemyAggr) {
+                if (!s_AppliedAggr || periodicRefresh) {
+                    FastWrite<int32_t>(coord + 0x1D0, 999);
+                    FastWrite<int32_t>(coord + 0x1D4, 999);
+                    FastWrite<float>(coord + 0x1E0, 500.0f);
+                    FastWrite<float>(coord + 0x1E4, 600.0f);
+                    FastWrite<float>(coord + 0x1E8, 0.0f);
+                }
+            } else if (s_AppliedAggr) {
+                FastWrite<int32_t>(coord + 0x1D0, s_DefMinActive);
+                FastWrite<int32_t>(coord + 0x1D4, s_DefMaxActive);
+                FastWrite<float>(coord + 0x1E0, s_DefEngageDist);
+                FastWrite<float>(coord + 0x1E4, s_DefDisengageDist);
+                FastWrite<float>(coord + 0x1E8, s_DefActDelay);
+            }
+        }
+    }
+
+    s_AppliedAggr = wantEnemyAggr;
 }
 
 // NGraphicsEngine::CCamera::UpdateRender real body (FUN_1475c5e60, RVA 0x75C5E60).
@@ -5771,7 +6521,13 @@ bool WriteConfig() {
     f << "MaxVisibilityDist=" << maxVisibilityDist << "\n";
     f << "HeatSystemActive=" << (g_HeatSystemActive ? 1 : 0) << "\n";
     f << "HostileDetectionRange=" << detectRange << "\n";
-    f << "AwarenessThreshold=" << visionThresh << "\n\n";
+    f << "AwarenessThreshold=" << visionThresh << "\n";
+    f << "AiPerfectAccuracy=" << (g_AiPerfectAccuracy ? 1 : 0) << "\n";
+    f << "AiExtremeAggression=" << (g_AiExtremeAggression ? 1 : 0) << "\n";
+    f << "AiAccEnemies=" << (g_AiAccEnemies ? 1 : 0) << "\n";
+    f << "AiAccArmyOfChaos=" << (g_AiAccArmyOfChaos ? 1 : 0) << "\n";
+    f << "AiAggrEnemies=" << (g_AiAggrEnemies ? 1 : 0) << "\n";
+    f << "AiAggrArmyOfChaos=" << (g_AiAggrArmyOfChaos ? 1 : 0) << "\n\n";
 
     f << "[HeatDistances]\n";
     for (int d = 0; d < 4; d++) {
@@ -5823,6 +6579,7 @@ bool WriteConfig() {
     f << "\n[FirstPerson]\n";
     f << "HideHead=" << (g_FpHideHead ? 1 : 0) << "\n";
     f << "HideBody=" << (g_FpHideBody ? 1 : 0) << "\n";
+    f << "HideVehicleWindows=" << (g_FpHideVehicleWindows ? 1 : 0) << "\n";
     f << "ForwardOffset=" << g_FpForwardOffset << "\n";
     f << "UpOffset=" << g_FpUpOffset << "\n";
     f << "RightOffset=" << g_FpRightOffset << "\n";
@@ -6005,6 +6762,13 @@ void ReadConfig() {
     bool found_true_kmh = false;
     bool found_desired_fov = false;
     bool found_fov_override = false;
+    bool found_ai_perfect_acc = false;
+    bool found_ai_extreme_aggr = false;
+    bool found_ai_acc_enemies = false;
+    bool found_ai_acc_chaos = false;
+    bool found_ai_aggr_enemies = false;
+    bool found_ai_aggr_chaos = false;
+    bool found_fp_hide_windows = false;
 
     g_SavedLocations.clear();
 
@@ -6156,6 +6920,30 @@ void ReadConfig() {
                 if (v > 0.0f) g_CustomVisionThreshold = v;
                 found_heat_vision = true;
             }
+            if (key == "AiPerfectAccuracy") {
+                g_AiPerfectAccuracy = (val == "1" || val == "true" || val == "True");
+                found_ai_perfect_acc = true;
+            }
+            if (key == "AiExtremeAggression") {
+                g_AiExtremeAggression = (val == "1" || val == "true" || val == "True");
+                found_ai_extreme_aggr = true;
+            }
+            if (key == "AiAccEnemies") {
+                g_AiAccEnemies = (val == "1" || val == "true" || val == "True");
+                found_ai_acc_enemies = true;
+            }
+            if (key == "AiAccArmyOfChaos") {
+                g_AiAccArmyOfChaos = (val == "1" || val == "true" || val == "True");
+                found_ai_acc_chaos = true;
+            }
+            if (key == "AiAggrEnemies") {
+                g_AiAggrEnemies = (val == "1" || val == "true" || val == "True");
+                found_ai_aggr_enemies = true;
+            }
+            if (key == "AiAggrArmyOfChaos") {
+                g_AiAggrArmyOfChaos = (val == "1" || val == "true" || val == "True");
+                found_ai_aggr_chaos = true;
+            }
         } else if (current_section == "HeatDistances") {
             for (int d = 0; d < 4; d++) {
                 for (int i = 0; i < 8; i++) {
@@ -6202,6 +6990,10 @@ void ReadConfig() {
         } else if (current_section == "FirstPerson") {
             if (key == "HideHead") g_FpHideHead = (val == "1");
             if (key == "HideBody") g_FpHideBody = (val == "1");
+            if (key == "HideVehicleWindows") {
+                g_FpHideVehicleWindows = (val == "1" || val == "true" || val == "True");
+                found_fp_hide_windows = true;
+            }
             if (key == "ForwardOffset") g_FpForwardOffset = std::stof(val);
             if (key == "UpOffset") g_FpUpOffset = std::stof(val);
             if (key == "RightOffset") g_FpRightOffset = std::stof(val);
@@ -6303,7 +7095,10 @@ void ReadConfig() {
         !found_all_vehicles_nitro_jump || !found_infinite_nitro ||
         !found_infinite_turbo_jump || !found_turbo_jump_air_hop ||
         !found_health || !found_booster_30s || !found_true_kmh ||
-        !found_desired_fov || !found_fov_override) {
+        !found_desired_fov || !found_fov_override ||
+        !found_ai_perfect_acc || !found_ai_extreme_aggr ||
+        !found_ai_acc_enemies || !found_ai_acc_chaos ||
+        !found_ai_aggr_enemies || !found_ai_aggr_chaos || !found_fp_hide_windows) {
         needs_update = true;
     }
 
@@ -10782,6 +11577,65 @@ void DrawHeatTab() {
         WriteConfig();
     }
 
+    ImGui::Spacing();
+    if (ImGui::Checkbox("AI 100% Accuracy (0% Miss)", &g_AiPerfectAccuracy)) {
+        WriteConfig();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("[?]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Makes AI never miss with any weapon, includes weapon attached vehicles");
+    }
+
+    ImGui::Indent(24.0f * g_UIScale);
+    if (ImGui::Checkbox("Apply to Enemies##Acc", &g_AiAccEnemies)) {
+        WriteConfig();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("[?]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Applies AI 100%% Accuracy to hostile factions (Black Hand, Police, Soldiers, Pirates).");
+    }
+
+    if (ImGui::Checkbox("Apply to Army of Chaos##Acc", &g_AiAccArmyOfChaos)) {
+        WriteConfig();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("[?]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Applies AI 100%% Accuracy to Rico's allied Army of Chaos (Rebels).");
+    }
+    ImGui::Unindent(24.0f * g_UIScale);
+
+    if (ImGui::Checkbox("Extreme AI Aggression", &g_AiExtremeAggression)) {
+        WriteConfig();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("[?]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Removes action token caps/cooldowns, combat coordinator limits, off-screen firing checks, burst pauses, reload delays, cover hiding delays, and sniper aim waits.");
+    }
+
+    ImGui::Indent(24.0f * g_UIScale);
+    if (ImGui::Checkbox("Apply to Enemies##Aggr", &g_AiAggrEnemies)) {
+        WriteConfig();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("[?]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Applies Extreme AI Aggression to hostile factions (Black Hand, Police, Soldiers, Pirates).");
+    }
+
+    if (ImGui::Checkbox("Apply to Army of Chaos##Aggr", &g_AiAggrArmyOfChaos)) {
+        WriteConfig();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("[?]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Applies Extreme AI Aggression to Rico's allied Army of Chaos (Rebels).");
+    }
+    ImGui::Unindent(24.0f * g_UIScale);
+
     // ------------------------------------------------------------------------
     // SECTION 4: REINFORCEMENT DISTANCES
     // ------------------------------------------------------------------------
@@ -10968,7 +11822,7 @@ namespace NukeWeapon {
         bool  syncDamageRadii    = true;
 
         // Weapon & missile properties (live real-time)
-        float fireInterval       = 0.02f;   // SFiringModuleTuning::m_fire_rate (seconds between shots)
+        float fireInterval       = 0.30f;   // SFiringModuleTuning::m_fire_rate (avoid multi-shot per tap in full-auto)
         bool  fullAuto           = false;   // SFiringModuleTuning::m_fully_automatic
         float missileSpeed1      = 100.0f;  // m_missile_acceleration[0]
         float missileSpeed2      = 100.0f;  // m_missile_acceleration[1]
@@ -11701,6 +12555,8 @@ namespace NukeWeapon {
                 Wr<uint32_t>(epe, p + 4, (uint32_t)g_NukeWeaponId);
             } else if (ph == 0x7d3a868cu && pt == 1 && Rd<uint32_t>(epe, p + 4) == rpgNameHash) {
                 Wr<uint32_t>(epe, p + 4, kNukeWeaponHash);
+            } else if (ph == 0x301133a9u && pt == 1 && isPrimaryMod) {
+                Wr<uint32_t>(epe, p + 4, 255u); // CFiringModuleRPGBloodhound::m_MaxActiveRockets (prevent 3-rocket lock)
             } else if (ph == 0xaa7096c9u && pt == 1) {
                 uint32_t cur = Rd<uint32_t>(epe, p + 4);
                 if (isPrimaryMod || cur == rpgWtuneHash || cur == baseWtuneHash || (extraPrimaryWtuneHash && cur == extraPrimaryWtuneHash)) {
@@ -15624,6 +16480,13 @@ else if (g_CurrentTab == 10) {
                 if (!g_FpHideBody) {
                     if (ImGui::Checkbox("Hide Head Mesh##FP", &g_FpHideHead)) WriteConfig();
                 }
+                if (ImGui::Checkbox("Hide Vehicle Windows & Windshields##FP", &g_FpHideVehicleWindows)) {
+                    g_FpVehWinRescanRequested.store(true, std::memory_order_relaxed);
+                    WriteConfig();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Hides windows and windshields on Rico's current vehicle while First Person Mode is active for an unobstructed view.");
+                }
                 ImGui::SetNextItemWidth(160.0f * g_UIScale);
                 if (ImGui::SliderFloat("Forward Offset##FP", &g_FpForwardOffset, -0.10f, 0.35f, "%.3f m")) WriteConfig();
                 ImGui::SetNextItemWidth(160.0f * g_UIScale);
@@ -17634,6 +18497,7 @@ HRESULT __stdcall hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
         s_GodModeState = false; // Reset state so God Mode re-triggers on the new player instance
         s_lastAltCharacter = 0;
         g_SpawnLimitsActive = false; // UI must not claim a budget that isn't applied yet
+        SyncAiCombatOverrides(false);
         // Death/loading: restore vanilla Havok bounds (memory + exit hook) so
         // respawn streaming initializes cleanly. UI customs (g_Live*) are kept;
         // the gated path re-applies them after the warmup once settled.
@@ -17671,6 +18535,7 @@ HRESULT __stdcall hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
 
     bool canApplyToggles = isWorldReady && (s_worldSpawnTime != 0) && ((GetTickCount() - s_worldSpawnTime) >= 2000);
     g_FovWorldSettled = canApplyToggles; // FOV detour gate mirrors the warmup gate
+    RefreshFpVehicleWindowSet(isWorldReady);
     g_NoRagdollCachedPlayerChar.store(canApplyToggles ? GetPlayerCharacterPtr() : 0, std::memory_order_relaxed);
     // Keep the native ragdoll/stumble flag off while noclip or No Ragdoll is active;
     // the captured native value is restored once both are switched off.
@@ -17711,6 +18576,7 @@ HRESULT __stdcall hkPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
             ApplyHeatDetermineSpawnPatches();
             s_AILimitsApplied = true;
         }
+        SyncAiCombatOverrides(true);
 
         // 3. Ground LOD (gated strictly to live in-game world).
         // Held back until the heavy-work grace so the terrain streams do not
@@ -18767,6 +19633,7 @@ o_WorldTime_SetTime = (WorldTime_SetTime_t)(g_ExeBase + (g_Addr_322720));
         fn_IsInCinematicCamera = (IsInCinematicCamera_t)(g_ExeBase + g_Addr_5570D0);
         fn_GetWieldingWeapon = (GetWieldingWeapon_t)(g_ExeBase + g_Addr_5509E0);
         fn_WeaponSetVisible = (WeaponSetVisible_t)(g_ExeBase + g_Addr_7B3200);
+        fn_GetCharacterVehiclePtr = g_Addr_54FD50 ? (GetCharacterVehiclePtr_t)(g_ExeBase + g_Addr_54FD50) : nullptr;
 
         auto installFpHook = [&](uintptr_t targetAddr, void* detour, void** orig) {
             if (!targetAddr) return;
@@ -18782,6 +19649,39 @@ o_WorldTime_SetTime = (WorldTime_SetTime_t)(g_ExeBase + (g_Addr_322720));
         installFpHook(g_ExeBase + g_Addr_253E20, (void*)&hk_UpdateRenderContexts, (void**)&o_UpdateRenderContexts);
         installFpHook(g_ExeBase + g_Addr_594D00, (void*)&hk_CharacterUpdateRender, (void**)&o_CharacterUpdateRender);
         installFpHook(ResolveJmpThunk(g_ExeBase + g_Addr_574350), (void*)&hk_CharacterSetOpacity, (void**)&o_CharacterSetOpacity);
+
+        // First Person vehicle window suppression, Enemy AI accuracy/aggression, and CAmmunitionManager hooks (Steam + Epic)
+        auto installResolvedRvaHook = [&](uintptr_t rva, void* detour, void** orig) {
+            if (!rva) return;
+            installFpHook(ResolveJmpThunk(g_ExeBase + rva), detour, orig);
+        };
+        installResolvedRvaHook(g_Addr_189000, (void*)&hk_ModelInstanceAddToRender, (void**)&o_ModelInstanceAddToRender);
+        installResolvedRvaHook(g_Addr_D74E30, (void*)&hk_RenderBlockWindowDraw, (void**)&o_RenderBlockWindowDraw);
+        installResolvedRvaHook(g_Addr_388460, (void*)&hk_AdjustAimPosition, (void**)&o_AdjustAimPosition);
+        installResolvedRvaHook(g_Addr_38A580, (void*)&hk_AiAdjustAimPosition, (void**)&o_AiAdjustAimPosition);
+        installResolvedRvaHook(g_Addr_38A940, (void*)&hk_AiAdjustAimPositionTS, (void**)&o_AiAdjustAimPositionTS);
+        installResolvedRvaHook(g_Addr_745060, (void*)&hk_GetCurrentScatterValue, (void**)&o_GetCurrentScatterValue);
+        installResolvedRvaHook(g_Addr_7B3D30, (void*)&hk_ShouldProjectileOffsetBeUsed, (void**)&o_ShouldProjectileOffsetBeUsed);
+        installResolvedRvaHook(g_Addr_3B9ED0, (void*)&hk_AiVehicleFireWeaponType, (void**)&o_AiVehicleFireWeaponType);
+        installResolvedRvaHook(g_Addr_7744C0, (void*)&hk_UpdateFirePatternAndAIMissVector, (void**)&o_UpdateFirePatternAndAIMissVector);
+        installResolvedRvaHook(g_Addr_389510, (void*)&hk_AiAcquireActionToken, (void**)&o_AiAcquireActionToken);
+        installResolvedRvaHook(g_Addr_38A4F0, (void*)&hk_AiActionTokenAvailable, (void**)&o_AiActionTokenAvailable);
+        installResolvedRvaHook(g_Addr_3CCB10, (void*)&hk_OnPruneActionToken, (void**)&o_OnPruneActionToken);
+        installResolvedRvaHook(g_Addr_39AF40, (void*)&hk_AiCombatCoordinatorOrdersAttack, (void**)&o_AiCombatCoordinatorOrdersAttack);
+        installResolvedRvaHook(g_Addr_3B2530, (void*)&hk_AiIsVisibleOnScreen, (void**)&o_AiIsVisibleOnScreen);
+        installResolvedRvaHook(g_Addr_3A0AF0, (void*)&hk_AiFireBurstMountedWeapon, (void**)&o_AiFireBurstMountedWeapon);
+        installResolvedRvaHook(g_Addr_3BF5D0, (void*)&hk_CharacterWeaponAimImpl, (void**)&o_CharacterWeaponAimImpl);
+        installResolvedRvaHook(g_Addr_3887B0, (void*)&hk_AgentWeaponAimImpl, (void**)&o_AgentWeaponAimImpl);
+        installResolvedRvaHook(g_Addr_3998B0, (void*)&hk_AiCharacterWeaponSweep, (void**)&o_AiCharacterWeaponSweep);
+        installResolvedRvaHook(g_Addr_3C00C0, (void*)&hk_CharacterWeaponSweepNodesImpl, (void**)&o_CharacterWeaponSweepNodesImpl);
+        installResolvedRvaHook(g_Addr_3C04F0, (void*)&hk_CharacterWeaponSweepToTargetImpl, (void**)&o_CharacterWeaponSweepToTargetImpl);
+        installResolvedRvaHook(g_Addr_75A2E0, (void*)&hk_OffsetAiAim, (void**)&o_OffsetAiAim);
+        installResolvedRvaHook(g_Addr_746FF0, (void*)&hk_FiringModuleGetShotMatrix, (void**)&o_FiringModuleGetShotMatrix);
+        installResolvedRvaHook(g_Addr_3BBB60, (void*)&hk_AiVehicleWeaponSweep, (void**)&o_AiVehicleWeaponSweep);
+        installResolvedRvaHook(g_Addr_3BBF30, (void*)&hk_AiVehicleWeaponSweepNodes, (void**)&o_AiVehicleWeaponSweepNodes);
+        fn_AmmoEraseIdx = g_Addr_6B0A60 ? (AmmoEraseIdx_t)ResolveJmpThunk(g_ExeBase + g_Addr_6B0A60) : nullptr;
+        installResolvedRvaHook(g_Addr_6B0BF0, (void*)&hk_AmmoErasePtr, (void**)&o_AmmoErasePtr);
+        installResolvedRvaHook(g_Addr_6FA9A0, (void*)&hk_AmmoUpdatePostSim, (void**)&o_AmmoUpdatePostSim);
 
         // NGraphicsEngine::CCamera::UpdateRender real body (FUN_1475c5e60, RVA 0x75C5E60).
         // Entry hook for the additive Desired-FOV bump.
@@ -18978,6 +19878,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         if (g_PopupHostMode) return TRUE;
 
         g_FirstPerson = false;
+        g_FpVehWinActive.store(false, std::memory_order_relaxed);
+        g_AiPerfectAccuracy = false;
+        g_AiExtremeAggression = false;
 
         ToggleAllVehiclesNitroJump(false);
         ToggleInfiniteNitro(false);
